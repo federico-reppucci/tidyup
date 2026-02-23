@@ -12,7 +12,7 @@ from typing import Any
 
 log = logging.getLogger("tidydownloads")
 
-GENERATE_TIMEOUT = 120  # seconds
+GENERATE_TIMEOUT = 300  # seconds (larger models need more time)
 STARTUP_TIMEOUT = 10  # seconds
 
 
