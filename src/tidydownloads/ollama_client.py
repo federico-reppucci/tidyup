@@ -69,6 +69,42 @@ class OllamaClient:
 
         raise OllamaError(f"Ollama did not start within {STARTUP_TIMEOUT}s")
 
+    def pull_model(self) -> None:
+        """Pull the configured model from Ollama. Streams progress to stderr."""
+        log.info("Pulling model %s...", self.model)
+        payload = json.dumps({
+            "name": self.model,
+            "stream": True,
+        }).encode()
+
+        req = urllib.request.Request(
+            f"{self.base_url}/api/pull",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=600) as resp:
+                last_status = ""
+                for line in resp:
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    status = data.get("status", "")
+                    if status != last_status:
+                        print(f"  {status}")
+                        last_status = status
+                    if data.get("error"):
+                        raise OllamaError(data["error"])
+        except urllib.error.URLError as e:
+            raise OllamaError(f"Failed to pull model: {e}")
+
+        if not self.is_model_available():
+            raise OllamaError(f"Model '{self.model}' not available after pull")
+        log.info("Model %s pulled successfully", self.model)
+
     def generate(self, prompt: str) -> dict[str, Any]:
         """Send a prompt to Ollama and return parsed JSON response."""
         payload = json.dumps({

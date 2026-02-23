@@ -18,6 +18,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="Enable debug output"
     )
+    parser.add_argument(
+        "--model", type=str, default=None,
+        help="Ollama model to use (e.g. llama3.1:8b, gemma2:9b)",
+    )
     sub = parser.add_subparsers(dest="command")
 
     # scan
@@ -50,6 +54,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     config = Config.load()
+    if args.model:
+        config.ollama_model = args.model
     setup_logging(config.log_dir, verbose=args.verbose)
 
     if args.command == "scan":
@@ -92,9 +98,16 @@ def cmd_scan(config: Config, dry_run: bool = False) -> int:
         try:
             client.ensure_running()
             if not client.is_model_available():
-                print(f"Error: Model '{config.ollama_model}' not found.")
-                print(f"  Run: ollama pull {config.ollama_model}")
-                return 1
+                answer = input(
+                    f"Model '{config.ollama_model}' not found. Download it? [y/N] "
+                ).strip().lower()
+                if answer in ("y", "yes"):
+                    print(f"Pulling {config.ollama_model}...")
+                    client.pull_model()
+                    print(f"Model '{config.ollama_model}' ready.\n")
+                else:
+                    print("Aborted.")
+                    return 1
         except OllamaError as e:
             print(f"Error: {e}")
             return 1
