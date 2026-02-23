@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TidyDownloads — Review</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <h1>TidyDownloads</h1>
+      <span id="counter" class="counter"></span>
+    </div>
+    <button id="accept-all-btn" class="btn btn-accept-all" onclick="acceptAll()">
+      Accept All
+    </button>
+  </header>
+
+  <main id="proposals-container">
+    <div class="loading">Loading proposals...</div>
+  </main>
+
+  <div id="empty-state" class="empty-state" style="display:none">
+    <div class="empty-icon">✓</div>
+    <h2>All done!</h2>
+    <p>No more files to review.</p>
+  </div>
+
+  <script>
+    const TOKEN = "{{ token }}";
+  </script>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
