@@ -58,8 +58,9 @@ function updateCounter() {
     container.style.display = "none";
     empty.style.display = "block";
   } else {
+    var moveCount = proposals.filter(function (p) { return p.action === "move"; }).length;
     counter.textContent = proposals.length + " file" + (proposals.length !== 1 ? "s" : "") + " to review";
-    btn.style.display = "";
+    btn.style.display = moveCount > 0 ? "" : "none";
     container.style.display = "";
     empty.style.display = "none";
   }
@@ -68,16 +69,22 @@ function updateCounter() {
 function buildCard(p) {
   const filename = p.filename;
   const notFound = p.exists === false;
+  const isUnsorted = p.action === "unsorted";
 
   const header = el("div", { className: "card-header" }, [
     el("span", { className: "file-icon", textContent: getIcon(filename) }),
     el("span", { className: "file-name", textContent: filename }),
   ]);
 
-  const dest = el("div", { className: "destination" }, [
-    el("span", { className: "arrow", textContent: "→" }),
-    el("span", { className: "path", textContent: "Documents/" + p.destination }),
-  ]);
+  var dest;
+  if (isUnsorted) {
+    dest = el("div", { className: "unsorted-label", textContent: "No destination — needs manual sorting" });
+  } else {
+    dest = el("div", { className: "destination" }, [
+      el("span", { className: "arrow", textContent: "→" }),
+      el("span", { className: "path", textContent: "Documents/" + p.destination }),
+    ]);
+  }
 
   const reason = el("div", { className: "reason", textContent: p.reason });
 
@@ -90,20 +97,23 @@ function buildCard(p) {
   if (!notFound) {
     actions.appendChild(el("button", {
       className: "btn btn-reject",
-      textContent: "Reject",
+      textContent: isUnsorted ? "Return to Downloads" : "Reject",
       onClick: function () { rejectFile(filename); },
     }));
-    actions.appendChild(el("button", {
-      className: "btn btn-accept",
-      textContent: "Accept",
-      onClick: function () { acceptFile(filename); },
-    }));
+    if (!isUnsorted) {
+      actions.appendChild(el("button", {
+        className: "btn btn-accept",
+        textContent: "Accept",
+        onClick: function () { acceptFile(filename); },
+      }));
+    }
   }
 
   const footer = el("div", { className: "card-footer" }, [badge, actions]);
 
+  const cardClass = "card" + (notFound ? " not-found" : "") + (isUnsorted ? " unsorted" : "");
   const card = el("div", {
-    className: "card" + (notFound ? " not-found" : ""),
+    className: cardClass,
     id: "card-" + encodeURIComponent(filename),
   }, [header, dest, reason, footer]);
 

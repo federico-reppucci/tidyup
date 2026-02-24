@@ -138,9 +138,9 @@ def test_confidence_filter(sample_downloads):
     assert by_name["tax-return-2025.pdf"].action == "move"
     assert by_name["report.docx"].action == "move"
 
-    # LLM with low confidence → skipped
-    assert by_name["screenshot.png"].action == "skip"
-    assert by_name["notes.txt"].action == "skip"
+    # LLM with low confidence → unsorted
+    assert by_name["screenshot.png"].action == "unsorted"
+    assert by_name["notes.txt"].action == "unsorted"
 
 
 # --- Rules-only backend ---

@@ -18,9 +18,33 @@ class FolderInfo:
     sample_files: list[str] = field(default_factory=list)
 
 
+SUBFOLDER_THRESHOLD = 3  # show subfolders only for folders with more than this many
+
+
 @dataclass
 class Taxonomy:
     folders: list[FolderInfo] = field(default_factory=list)
+
+    def find_folder(self, name: str) -> FolderInfo | None:
+        """Find a folder by name, tolerating numeric prefixes and case differences.
+
+        Matches "Education" to "04 Education", "work" to "Work", etc.
+        """
+        name_lower = name.lower().strip()
+        # Exact match first
+        for f in self.folders:
+            if f.name.lower() == name_lower:
+                return f
+        # Strip numeric prefix (e.g., "04 Education" → "education")
+        for f in self.folders:
+            stripped = f.name.lstrip("0123456789 ").lower()
+            if stripped == name_lower:
+                return f
+        # Prefix match (e.g., "Education" matches "04 Education")
+        for f in self.folders:
+            if name_lower in f.name.lower():
+                return f
+        return None
 
     def to_prompt_text(self) -> str:
         """Format taxonomy as text for the LLM prompt."""
@@ -37,6 +61,25 @@ class Taxonomy:
             if folder.sample_files:
                 example = ", ".join(folder.sample_files[:3])
                 lines.append(f"  (root files: {example})")
+        return "\n".join(lines)
+
+    def to_compact_text(self) -> str:
+        """Compact taxonomy: one line per folder with subfolder hints.
+
+        Designed for small LLMs that can't reason over long context.
+        Format: ``FolderName — sub1, sub2, sub3`` on a single line.
+        Valid destination paths (folder/subfolder) are implicit from the
+        listed names.
+        """
+        lines: list[str] = []
+        for folder in self.folders:
+            if folder.subfolders:
+                desc = ", ".join(folder.subfolders[:5])
+                if len(folder.subfolders) > 5:
+                    desc += f", ... ({len(folder.subfolders)} total)"
+                lines.append(f"{folder.name} — {desc}")
+            else:
+                lines.append(folder.name)
         return "\n".join(lines)
 
 

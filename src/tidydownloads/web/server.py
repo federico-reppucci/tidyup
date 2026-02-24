@@ -60,10 +60,10 @@ def create_app(config: Config) -> tuple[Flask, str]:
     def get_proposals():
         check_token()
         proposals = _load_proposals()
-        # Filter to only "move" proposals that still exist in to_move/
+        # Filter to actionable proposals (move + unsorted)
         active = []
         for p in proposals:
-            if p.get("action") != "move":
+            if p.get("action") not in ("move", "unsorted"):
                 continue
             staged = Path(p["staged_path"])
             p["exists"] = staged.exists()
@@ -83,6 +83,9 @@ def create_app(config: Config) -> tuple[Flask, str]:
         staged_path = Path(proposal["staged_path"])
         if not staged_path.exists():
             abort(404, "File not found in staging")
+
+        if proposal.get("action") == "unsorted":
+            abort(400, "Cannot accept unsorted file — no destination assigned")
 
         dest_dir = config.documents_dir / proposal["destination"]
         scan_id = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")

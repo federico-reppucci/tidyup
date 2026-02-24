@@ -201,6 +201,18 @@ main {
   gap: 8px;
 }
 
+/* Unsorted card */
+.card.unsorted {
+  border-left: 3px solid var(--confidence-mid);
+}
+
+.unsorted-label {
+  font-size: 13px;
+  color: var(--confidence-mid);
+  font-weight: 500;
+  margin: 8px 0;
+}
+
 .not-found {
   opacity: 0.5;
 }

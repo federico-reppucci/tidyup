@@ -3,15 +3,23 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
 from tidydownloads.config import Config
 from tidydownloads.content import extract_preview
-from tidydownloads.ollama_client import OllamaClient, OllamaError
-from tidydownloads.prompts import build_classification_prompt
+from tidydownloads.ollama_client import (
+    OllamaClient,
+    OllamaError,
+    PER_FILE_TIMEOUT,
+    SPINNER,
+    make_token_callback,
+)
+from tidydownloads.prompts import build_classification_prompt, build_subfolder_prompt
 from tidydownloads.scanner import FileInfo
-from tidydownloads.taxonomy import Taxonomy
+from tidydownloads.taxonomy import FolderInfo, Taxonomy
 
 log = logging.getLogger("tidydownloads")
 
@@ -19,7 +27,7 @@ log = logging.getLogger("tidydownloads")
 @dataclass
 class Classification:
     filename: str
-    action: str  # "move" | "delete" | "skip"
+    action: str  # "move" | "delete" | "unsorted" | "skip"
     destination: str  # Documents subfolder path (only for "move")
     reason: str
     confidence: float
@@ -75,8 +83,9 @@ class ClassifierBackend(Protocol):
 class OllamaBackend:
     """Uses local Ollama instance for classification."""
 
-    def __init__(self, client: OllamaClient):
+    def __init__(self, client: OllamaClient, per_file_timeout: int = PER_FILE_TIMEOUT):
         self.client = client
+        self.per_file_timeout = per_file_timeout
 
     def classify(
         self, files: list[FileInfo], taxonomy: Taxonomy, config: Config
@@ -87,39 +96,64 @@ class OllamaBackend:
         for batch_idx in range(0, len(files), config.batch_size):
             batch = files[batch_idx:batch_idx + config.batch_size]
             batch_num = batch_idx // config.batch_size + 1
-            print(f"  Classifying batch {batch_num}/{total_batches}...")
+            prefix = f"Classifying batch {batch_num}/{total_batches}..."
+            on_token = make_token_callback(prefix)
 
             file_descriptions = []
             for f in batch:
                 desc = f"{f.name} ({f.mime_type}, {f.size_human})"
                 preview = extract_preview(f.path)
                 if preview:
-                    # Truncate preview for prompt space
                     preview_short = preview[:200].replace("\n", " ")
                     desc += f" — content preview: {preview_short}"
                 file_descriptions.append(desc)
 
             prompt = build_classification_prompt(
-                taxonomy.to_prompt_text(),
+                taxonomy.to_compact_text(),
                 file_descriptions,
             )
 
+            batch_timeout = len(batch) * self.per_file_timeout
+
             try:
-                response = self.client.generate(prompt)
+                response = self.client.generate(
+                    prompt, timeout=batch_timeout, on_token=on_token,
+                )
+                print(f"\r  Classifying batch {batch_num}/{total_batches}... done")
                 batch_results = _parse_llm_response(response, batch)
                 results.extend(batch_results)
             except OllamaError as e:
+                is_timeout = "timed out" in str(e)
+                print(f"\r  Classifying batch {batch_num}/{total_batches}... {'TIMEOUT' if is_timeout else 'ERROR'}: {e}")
                 log.error("Ollama error on batch %d: %s", batch_num, e)
-                # Skip this batch — files stay in Downloads
+                reason = (
+                    f"LLM timeout ({batch_timeout}s per-file exceeded)"
+                    if is_timeout
+                    else f"LLM error: {e}"
+                )
                 for f in batch:
                     results.append(Classification(
                         filename=f.name,
-                        action="skip",
+                        action="unsorted",
                         destination="",
-                        reason=f"LLM error: {e}",
+                        reason=reason,
                         confidence=0.0,
                         method="llm",
                     ))
+
+        # Stage 2: refine subfolder assignments
+        file_info_map = {f.name: f for f in files}
+        print("  Stage 2: refining subfolder assignments...")
+
+        def _stage2_progress(prefix: str, n: int) -> None:
+            msg = f"\r  {prefix} {SPINNER[n % len(SPINNER)]} {n} tokens" if n else f"\r  {prefix}"
+            print(msg, end="", flush=True)
+
+        results = refine_subfolders(
+            self.client, results, taxonomy, file_info_map,
+            per_file_timeout=self.per_file_timeout,
+            on_progress=_stage2_progress,
+        )
 
         return results
 
@@ -180,6 +214,130 @@ def _parse_llm_response(
             ))
 
     return results
+
+
+# --- Stage 2: Subfolder refinement ---
+
+def refine_subfolders(
+    client: OllamaClient,
+    results: list[Classification],
+    taxonomy: Taxonomy,
+    file_info_map: dict[str, FileInfo],
+    per_file_timeout: int = PER_FILE_TIMEOUT,
+    on_progress: Callable[[str, int], None] | None = None,
+) -> list[Classification]:
+    """Refine stage 1 'move' classifications by picking the correct subfolder.
+
+    Groups files by their top-level destination folder, then for each folder
+    that has subfolders, asks the LLM to pick the best subfolder.
+
+    If stage 2 fails for a group, the stage 1 destination is kept unchanged.
+    """
+    # Group "move" results by top-level folder
+    groups: dict[str, list[Classification]] = defaultdict(list)
+    for r in results:
+        if r.action == "move" and r.destination:
+            top_folder = r.destination.split("/")[0]
+            groups[top_folder].append(r)
+
+    if not groups:
+        return results
+
+    for folder_name, group in groups.items():
+        folder_info = taxonomy.find_folder(folder_name)
+        if not folder_info or not folder_info.subfolders:
+            # No subfolders to refine — update destination to actual folder name
+            for r in group:
+                if folder_info:
+                    r.destination = folder_info.name
+            continue
+
+        # Build file descriptions for this group
+        file_descriptions: list[str] = []
+        for r in group:
+            fi = file_info_map.get(r.filename)
+            if fi:
+                desc = f"{fi.name} ({fi.mime_type}, {fi.size_human})"
+                preview = extract_preview(fi.path)
+                if preview:
+                    desc += f" — content preview: {preview[:200].replace(chr(10), ' ')}"
+                file_descriptions.append(desc)
+            else:
+                file_descriptions.append(r.filename)
+
+        prompt = build_subfolder_prompt(
+            folder_info.name,
+            folder_info.subfolders,
+            file_descriptions,
+        )
+
+        batch_timeout = len(group) * per_file_timeout
+
+        try:
+            if on_progress:
+                on_progress(f"Refining {folder_info.name}/", 0)
+
+            response = client.generate(
+                prompt,
+                timeout=batch_timeout,
+                on_token=on_progress and (lambda n: on_progress(f"Refining {folder_info.name}/", n)),
+            )
+
+            if on_progress:
+                print(f"\r  Refining {folder_info.name}/... done")
+
+            _apply_subfolder_response(response, folder_info, group)
+        except OllamaError as e:
+            log.warning("Stage 2 failed for %s: %s — keeping stage 1 destinations", folder_info.name, e)
+            if on_progress:
+                print(f"\r  Refining {folder_info.name}/... skipped ({e})")
+            # Keep stage 1 destination, just fix to actual folder name
+            for r in group:
+                r.destination = folder_info.name
+
+    return results
+
+
+def _apply_subfolder_response(
+    response: dict, folder_info: FolderInfo, group: list[Classification],
+) -> None:
+    """Parse stage 2 response and update classification destinations."""
+    items = response.get("files", [])
+    if not isinstance(items, list):
+        log.warning("Stage 2 returned non-list for %s", folder_info.name)
+        for r in group:
+            r.destination = folder_info.name
+        return
+
+    # Build a lookup: lowercase subfolder name → actual subfolder name
+    sub_lookup: dict[str, str] = {s.lower(): s for s in folder_info.subfolders}
+
+    subfolder_map: dict[str, str] = {}
+    for item in items:
+        filename = item.get("file", "")
+        subfolder = item.get("subfolder", "")
+        if filename and subfolder:
+            subfolder_map[filename] = subfolder
+
+    for r in group:
+        chosen = subfolder_map.get(r.filename, "")
+        if chosen:
+            # Fuzzy match to actual subfolder name
+            actual_sub = sub_lookup.get(chosen.lower())
+            if not actual_sub:
+                # Try partial match
+                for key, val in sub_lookup.items():
+                    if chosen.lower() in key or key in chosen.lower():
+                        actual_sub = val
+                        break
+            if actual_sub:
+                r.destination = f"{folder_info.name}/{actual_sub}"
+            else:
+                log.debug("Stage 2 subfolder '%s' not found in %s", chosen, folder_info.name)
+                r.destination = folder_info.name
+        else:
+            # No subfolder assigned — keep top-level
+            r.destination = folder_info.name
 
 
 # --- Rules-only fallback backend ---
@@ -245,8 +403,8 @@ def classify_files(
     staged = 0
     skipped = 0
     for r in tier2_results:
-        if r.confidence < config.confidence_threshold and r.action != "skip":
-            r.action = "skip"
+        if r.confidence < config.confidence_threshold and r.action not in ("skip", "unsorted"):
+            r.action = "unsorted"
             r.reason = f"Low confidence ({r.confidence:.2f}): {r.reason}"
             skipped += 1
         else:
@@ -255,6 +413,6 @@ def classify_files(
         final.append(r)
 
     if skipped:
-        print(f"  Confidence filter: {skipped} files below threshold, staying in Downloads")
+        print(f"  Confidence filter: {skipped} files below threshold → unsorted/")
 
     return final

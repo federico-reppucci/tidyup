@@ -32,6 +32,10 @@ class Config:
         return self.downloads_dir / "to_move"
 
     @property
+    def staging_unsorted(self) -> Path:
+        return self.downloads_dir / "unsorted"
+
+    @property
     def proposals_path(self) -> Path:
         return self.data_dir / "proposals.json"
 

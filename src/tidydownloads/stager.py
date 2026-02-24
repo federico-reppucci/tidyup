@@ -1,4 +1,4 @@
-"""Stage classified files into to_delete/ and to_move/ folders."""
+"""Stage classified files into to_delete/, to_move/, and unsorted/ folders."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ log = logging.getLogger("tidydownloads")
 def check_stale_staging(config: Config) -> list[str]:
     """Check if staging folders have leftover files from a previous run."""
     warnings: list[str] = []
-    for folder in (config.staging_delete, config.staging_move):
+    for folder in (config.staging_delete, config.staging_move, config.staging_unsorted):
         if folder.exists():
             leftover = [
                 f.name for f in folder.iterdir()
@@ -42,6 +42,7 @@ def stage_files(
 
     delete_count = 0
     move_count = 0
+    unsorted_count = 0
     skip_count = 0
 
     for cls in classifications:
@@ -113,6 +114,36 @@ def stage_files(
                     config.undo_log_path,
                 )
 
+        elif cls.action == "unsorted":
+            if dry_run:
+                print(f"  [DRY RUN] Would stage as unsorted: {cls.filename} — {cls.reason}")
+                unsorted_count += 1
+                continue
+
+            dest = move_file_safely(source, config.staging_unsorted)
+            if dest:
+                unsorted_count += 1
+                proposals.append({
+                    "filename": cls.filename,
+                    "staged_path": str(dest),
+                    "original_path": str(source),
+                    "action": "unsorted",
+                    "destination": "",
+                    "reason": cls.reason,
+                    "confidence": cls.confidence,
+                    "method": cls.method,
+                })
+                record_move(
+                    JournalEntry(
+                        timestamp=scan_id,
+                        operation="scan_stage",
+                        source=str(source),
+                        destination=str(dest),
+                        scan_id=scan_id,
+                    ),
+                    config.undo_log_path,
+                )
+
         else:
             skip_count += 1
 
@@ -126,6 +157,7 @@ def stage_files(
         "scan_id": scan_id,
         "delete_count": delete_count,
         "move_count": move_count,
+        "unsorted_count": unsorted_count,
         "skip_count": skip_count,
         "total": len(classifications),
     }

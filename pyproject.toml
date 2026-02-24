@@ -28,6 +28,9 @@ tidydownloads = "tidydownloads.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+tidydownloads = ["web/templates/*.html", "web/static/*.css", "web/static/*.js"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

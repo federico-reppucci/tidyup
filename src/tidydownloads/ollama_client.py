@@ -8,12 +8,24 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from typing import Any
 
 log = logging.getLogger("tidydownloads")
 
 GENERATE_TIMEOUT = 300  # seconds (larger models need more time)
+PER_FILE_TIMEOUT = 20  # seconds per file in a batch
 STARTUP_TIMEOUT = 10  # seconds
+
+SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+
+def make_token_callback(prefix: str) -> Callable[[int], None]:
+    """Return a callback that prints a spinner + token count on the current line."""
+    def on_token(n: int) -> None:
+        frame = SPINNER[n % len(SPINNER)]
+        print(f"\r  {prefix} {frame} {n} tokens", end="", flush=True)
+    return on_token
 
 
 class OllamaError(Exception):
@@ -105,13 +117,23 @@ class OllamaClient:
             raise OllamaError(f"Model '{self.model}' not available after pull")
         log.info("Model %s pulled successfully", self.model)
 
-    def generate(self, prompt: str) -> dict[str, Any]:
-        """Send a prompt to Ollama and return parsed JSON response."""
+    def generate(
+        self,
+        prompt: str,
+        timeout: int = GENERATE_TIMEOUT,
+        on_token: Callable[[int], None] | None = None,
+    ) -> dict[str, Any]:
+        """Send a prompt to Ollama and return parsed JSON response.
+
+        Uses streaming to provide live progress via *on_token* and to
+        enforce a socket-level *timeout* (applied per-chunk, so stalls
+        are detected quickly).
+        """
         payload = json.dumps({
             "model": self.model,
             "prompt": prompt,
             "format": "json",
-            "stream": False,
+            "stream": True,
             "options": {
                 "temperature": 0.1,
             },
@@ -125,13 +147,39 @@ class OllamaClient:
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=GENERATE_TIMEOUT) as resp:
-                data = json.loads(resp.read())
-                response_text = data.get("response", "")
-                return json.loads(response_text)
+            response_text = ""
+            token_count = 0
+            deadline = time.monotonic() + timeout
+
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                for line in resp:
+                    if time.monotonic() > deadline:
+                        raise OllamaError(
+                            f"Ollama request timed out ({timeout}s)"
+                        )
+                    try:
+                        chunk = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if chunk.get("error"):
+                        raise OllamaError(chunk["error"])
+
+                    fragment = chunk.get("response", "")
+                    if fragment:
+                        response_text += fragment
+                        token_count += 1
+                        if on_token is not None:
+                            on_token(token_count)
+
+                    if chunk.get("done"):
+                        break
+
+            return json.loads(response_text)
         except urllib.error.URLError as e:
             raise OllamaError(f"Failed to connect to Ollama: {e}")
+        except ConnectionError as e:
+            raise OllamaError(f"Ollama connection lost: {e}")
         except json.JSONDecodeError as e:
             raise OllamaError(f"Invalid JSON from Ollama: {e}")
         except TimeoutError:
-            raise OllamaError("Ollama request timed out")
+            raise OllamaError(f"Ollama request timed out ({timeout}s)")

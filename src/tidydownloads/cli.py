@@ -47,6 +47,25 @@ def main(argv: list[str] | None = None) -> int:
     # status
     sub.add_parser("status", help="Check Ollama status and show last run stats")
 
+    # benchmark
+    bench_p = sub.add_parser("benchmark", help="Benchmark model accuracy and speed")
+    bench_p.add_argument(
+        "--model", dest="bench_models", action="append", required=True,
+        help="Ollama model to benchmark (repeatable for comparison)",
+    )
+    bench_p.add_argument(
+        "--files", type=int, default=100,
+        help="Number of test files (default: 100)",
+    )
+    bench_p.add_argument(
+        "--seed", type=int, default=42,
+        help="Random seed for reproducibility (default: 42)",
+    )
+    bench_p.add_argument(
+        "--timeout", type=int, default=20,
+        help="Per-file timeout in seconds (default: 20)",
+    )
+
     args = parser.parse_args(argv)
 
     if not args.command:
@@ -71,6 +90,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_undo(config, op_filter)
     elif args.command == "status":
         return cmd_status(config)
+    elif args.command == "benchmark":
+        return cmd_benchmark(config, args.bench_models, args.files, args.seed, args.timeout)
 
     return 0
 
@@ -134,9 +155,10 @@ def cmd_scan(config: Config, dry_run: bool = False) -> int:
     print(f"\nDone! Summary:")
     print(f"  Staged for deletion: {result['delete_count']}")
     print(f"  Staged for move:     {result['move_count']}")
-    print(f"  Skipped (unsure):    {result['skip_count']}")
+    print(f"  Unsorted:            {result['unsorted_count']}")
+    print(f"  Skipped:             {result['skip_count']}")
 
-    if not dry_run and (result["delete_count"] or result["move_count"]):
+    if not dry_run and (result["delete_count"] or result["move_count"] or result["unsorted_count"]):
         print(f"\nNext: run 'tidydownloads review' to review proposals.")
 
     return 0
@@ -221,7 +243,7 @@ def cmd_status(config: Config) -> int:
         print(f"\n  No previous scan found.")
 
     # Staging folders
-    for folder in (config.staging_delete, config.staging_move):
+    for folder in (config.staging_delete, config.staging_move, config.staging_unsorted):
         if folder.exists():
             count = sum(1 for f in folder.iterdir() if not f.name.startswith("."))
             print(f"  {folder.name}/: {count} files")
@@ -232,3 +254,12 @@ def cmd_status(config: Config) -> int:
     print(f"\n  Undo log: {len(active)} active entries, {len(entries) - len(active)} undone")
 
     return 0
+
+
+def cmd_benchmark(
+    config: Config, models: list[str], num_files: int, seed: int,
+    per_file_timeout: int = 20,
+) -> int:
+    from tidydownloads.benchmark import run_benchmark
+
+    return run_benchmark(config, models, num_files, seed, per_file_timeout=per_file_timeout)
