@@ -12,7 +12,9 @@ import statistics
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
+from tidydownloads.apple_fm_client import AppleFMClient, AppleFMError
 from tidydownloads.classifier import (
     Classification,
     classify_files,
@@ -30,6 +32,8 @@ from tidydownloads.ollama_client import (
 from tidydownloads.prompts import build_classification_prompt
 from tidydownloads.scanner import FileInfo, scan_downloads
 from tidydownloads.taxonomy import Taxonomy, discover_taxonomy
+
+_LLM_ERRORS = (OllamaError, AppleFMError)
 
 
 @dataclass
@@ -51,7 +55,7 @@ class TimedBackend:
     """LLM backend that records per-batch timing."""
 
     def __init__(
-        self, client: OllamaClient, result: BenchResult,
+        self, client: Any, result: BenchResult,
         per_file_timeout: int = PER_FILE_TIMEOUT,
     ):
         self.client = client
@@ -104,7 +108,7 @@ class TimedBackend:
                 self.r.total_llm_time += elapsed
                 print(f"\r    {label} {elapsed:.1f}s ({len(batch)/elapsed:.1f} f/s)")
                 results.extend(_parse_llm_response(response, batch))
-            except OllamaError as e:
+            except _LLM_ERRORS as e:
                 elapsed = time.perf_counter() - t0
                 self.r.batch_times.append(elapsed)
                 self.r.batch_sizes.append(len(batch))
@@ -259,15 +263,25 @@ def run_model(
 ) -> BenchResult:
     """Run classification for one model and return metrics."""
     result = BenchResult(model=model)
-    config.ollama_model = model
 
-    client = OllamaClient(config.ollama_url, model)
-    print(f"  Ensuring {model} is ready...", end=" ", flush=True)
-    client.ensure_running()
-    if not client.is_model_available():
-        print(f"pulling...", end=" ", flush=True)
-        client.pull_model()
-    print("ok")
+    if model == "apple":
+        client: Any = AppleFMClient()
+        print(f"  Checking Apple FM availability...", end=" ", flush=True)
+        if not client.is_available():
+            raise AppleFMError(
+                "Apple Foundation Model not available. "
+                "Requires macOS 26+ with Apple Intelligence and afm-cli installed."
+            )
+        print("ok")
+    else:
+        config.ollama_model = model
+        client = OllamaClient(config.ollama_url, model)
+        print(f"  Ensuring {model} is ready...", end=" ", flush=True)
+        client.ensure_running()
+        if not client.is_model_available():
+            print(f"pulling...", end=" ", flush=True)
+            client.pull_model()
+        print("ok")
 
     backend = TimedBackend(client, result, per_file_timeout=per_file_timeout)
 

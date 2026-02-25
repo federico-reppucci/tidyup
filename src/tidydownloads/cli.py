@@ -20,7 +20,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--model", type=str, default=None,
-        help="Ollama model to use (e.g. llama3.1:8b, gemma2:9b)",
+        help="LLM model to use: an Ollama model name (e.g. gemma3:1b) "
+             "or 'apple' for Apple Intelligence on-device model",
     )
     sub = parser.add_subparsers(dest="command")
 
@@ -51,7 +52,8 @@ def main(argv: list[str] | None = None) -> int:
     bench_p = sub.add_parser("benchmark", help="Benchmark model accuracy and speed")
     bench_p.add_argument(
         "--model", dest="bench_models", action="append", required=True,
-        help="Ollama model to benchmark (repeatable for comparison)",
+        help="Model to benchmark (repeatable for comparison). "
+             "Use 'apple' for Apple Intelligence or an Ollama model name",
     )
     bench_p.add_argument(
         "--files", type=int, default=100,
@@ -97,7 +99,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def cmd_scan(config: Config, dry_run: bool = False) -> int:
-    from tidydownloads.classifier import classify_files
+    from tidydownloads.apple_fm_client import AppleFMClient, AppleFMError
+    from tidydownloads.classifier import OllamaBackend, classify_files
     from tidydownloads.ollama_client import OllamaClient, OllamaError
     from tidydownloads.scanner import scan_downloads
     from tidydownloads.stager import check_stale_staging, stage_files
@@ -113,25 +116,37 @@ def cmd_scan(config: Config, dry_run: bool = False) -> int:
             print(w)
         print("  Run 'tidydownloads review' to handle them, or 'tidydownloads undo' to reverse.\n")
 
-    # Ensure Ollama is running (unless dry-run could work without)
-    if not dry_run:
+    # Prepare LLM backend
+    if config.ollama_model == "apple":
+        apple_client = AppleFMClient()
+        if not apple_client.is_available():
+            print("Error: Apple Foundation Model not available. "
+                  "Requires macOS 26+ with Apple Intelligence and afm-cli installed.")
+            return 1
+        backend = OllamaBackend(apple_client)
+    else:
         client = OllamaClient(config.ollama_url, config.ollama_model)
         try:
             client.ensure_running()
             if not client.is_model_available():
-                answer = input(
-                    f"Model '{config.ollama_model}' not found. Download it? [y/N] "
-                ).strip().lower()
-                if answer in ("y", "yes"):
-                    print(f"Pulling {config.ollama_model}...")
-                    client.pull_model()
-                    print(f"Model '{config.ollama_model}' ready.\n")
+                if dry_run:
+                    print(f"Warning: model '{config.ollama_model}' not available, "
+                          "classification may fail.")
                 else:
-                    print("Aborted.")
-                    return 1
+                    answer = input(
+                        f"Model '{config.ollama_model}' not found. Download it? [y/N] "
+                    ).strip().lower()
+                    if answer in ("y", "yes"):
+                        print(f"Pulling {config.ollama_model}...")
+                        client.pull_model()
+                        print(f"Model '{config.ollama_model}' ready.\n")
+                    else:
+                        print("Aborted.")
+                        return 1
         except OllamaError as e:
             print(f"Error: {e}")
             return 1
+        backend = OllamaBackend(client)
 
     # Scan
     files = scan_downloads(config)
@@ -145,7 +160,7 @@ def cmd_scan(config: Config, dry_run: bool = False) -> int:
     taxonomy = discover_taxonomy(config.documents_dir)
 
     # Classify
-    classifications = classify_files(files, taxonomy, config)
+    classifications = classify_files(files, taxonomy, config, backend=backend)
 
     # Stage
     print()

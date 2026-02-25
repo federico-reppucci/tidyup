@@ -8,6 +8,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+from typing import Any
+
+from tidydownloads.apple_fm_client import AppleFMError
 from tidydownloads.config import Config
 from tidydownloads.content import extract_preview
 from tidydownloads.ollama_client import (
@@ -20,6 +23,9 @@ from tidydownloads.ollama_client import (
 from tidydownloads.prompts import build_classification_prompt, build_subfolder_prompt
 from tidydownloads.scanner import FileInfo
 from tidydownloads.taxonomy import FolderInfo, Taxonomy
+
+# Errors from any LLM client
+_LLM_ERRORS = (OllamaError, AppleFMError)
 
 log = logging.getLogger("tidydownloads")
 
@@ -122,10 +128,10 @@ class OllamaBackend:
                 print(f"\r  Classifying batch {batch_num}/{total_batches}... done")
                 batch_results = _parse_llm_response(response, batch)
                 results.extend(batch_results)
-            except OllamaError as e:
+            except _LLM_ERRORS as e:
                 is_timeout = "timed out" in str(e)
                 print(f"\r  Classifying batch {batch_num}/{total_batches}... {'TIMEOUT' if is_timeout else 'ERROR'}: {e}")
-                log.error("Ollama error on batch %d: %s", batch_num, e)
+                log.error("LLM error on batch %d: %s", batch_num, e)
                 reason = (
                     f"LLM timeout ({batch_timeout}s per-file exceeded)"
                     if is_timeout
@@ -219,7 +225,7 @@ def _parse_llm_response(
 # --- Stage 2: Subfolder refinement ---
 
 def refine_subfolders(
-    client: OllamaClient,
+    client: Any,  # OllamaClient or AppleFMClient — must have generate()
     results: list[Classification],
     taxonomy: Taxonomy,
     file_info_map: dict[str, FileInfo],
@@ -287,7 +293,7 @@ def refine_subfolders(
                 print(f"\r  Refining {folder_info.name}/... done")
 
             _apply_subfolder_response(response, folder_info, group)
-        except OllamaError as e:
+        except _LLM_ERRORS as e:
             log.warning("Stage 2 failed for %s: %s — keeping stage 1 destinations", folder_info.name, e)
             if on_progress:
                 print(f"\r  Refining {folder_info.name}/... skipped ({e})")

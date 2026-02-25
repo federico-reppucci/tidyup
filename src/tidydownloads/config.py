@@ -15,7 +15,7 @@ class Config:
         default_factory=lambda: Path.home() / ".local" / "share" / "tidydownloads"
     )
     ollama_url: str = "http://localhost:11434"
-    ollama_model: str = "llama3.1:8b"
+    ollama_model: str = "gemma3:1b"
     excluded: list[str] = field(
         default_factory=lambda: [".DS_Store", ".localized", "*.tmp"]
     )
