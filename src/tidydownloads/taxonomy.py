@@ -24,6 +24,7 @@ SUBFOLDER_THRESHOLD = 3  # show subfolders only for folders with more than this 
 @dataclass
 class Taxonomy:
     folders: list[FolderInfo] = field(default_factory=list)
+    _subfolder_samples: dict[str, list[str]] = field(default_factory=dict)
 
     def find_folder(self, name: str) -> FolderInfo | None:
         """Find a folder by name, tolerating numeric prefixes and case differences.
@@ -46,13 +47,23 @@ class Taxonomy:
                 return f
         return None
 
+    def valid_paths(self) -> list[str]:
+        """Return all valid destination paths (top-level and subfolder)."""
+        paths: list[str] = []
+        for folder in self.folders:
+            paths.append(folder.name)
+            for sub in folder.subfolders:
+                paths.append(f"{folder.name}/{sub}")
+        return paths
+
     def to_prompt_text(self) -> str:
-        """Format taxonomy as text for the LLM prompt."""
+        """Format taxonomy as text for the LLM prompt (full detail)."""
         lines: list[str] = []
         for folder in self.folders:
             lines.append(f"{folder.name}/")
             for sub in folder.subfolders:
-                samples = _get_samples_for(folder, sub)
+                key = f"{folder.name}/{sub}"
+                samples = self._subfolder_samples.get(key, [])
                 if samples:
                     example = ", ".join(samples)
                     lines.append(f"  ├── {sub}/ (e.g., {example})")
@@ -82,11 +93,48 @@ class Taxonomy:
                 lines.append(folder.name)
         return "\n".join(lines)
 
+    def to_midsize_text(self, max_bytes: int = 3072) -> str:
+        """Mid-size taxonomy: full paths with 1-2 sample filenames per subfolder.
 
-def _get_samples_for(folder: FolderInfo, subfolder_name: str) -> list[str]:
-    """Get sample files list — stored as subfolder_name:samples in the full data."""
-    # Samples are collected per-subfolder during discovery
-    return []  # Filled during discovery via the enriched version
+        Shows exact destination paths the LLM should output, with sample files
+        to disambiguate sibling subfolders. Target ~2KB.
+
+        Format:
+            04 Education/MBA — strategy-case-study.pdf, marketing-final.docx
+            04 Education/Polimi — meccanica-razionale.pdf
+            02 Finance/Investments — vanguard-statement.pdf
+            01 Personal ID & Documents
+        """
+        lines: list[str] = []
+        for folder in self.folders:
+            if folder.subfolders:
+                for sub in folder.subfolders:
+                    key = f"{folder.name}/{sub}"
+                    samples = self._subfolder_samples.get(key, [])[:2]
+                    if samples:
+                        lines.append(f"{key} — {', '.join(samples)}")
+                    else:
+                        lines.append(key)
+            else:
+                lines.append(folder.name)
+
+        text = "\n".join(lines)
+        # Trim if over budget: drop samples first, then subfolders
+        if len(text.encode()) > max_bytes:
+            lines = []
+            for folder in self.folders:
+                if folder.subfolders:
+                    for sub in folder.subfolders:
+                        lines.append(f"{folder.name}/{sub}")
+                else:
+                    lines.append(folder.name)
+            text = "\n".join(lines)
+
+        while len(text.encode()) > max_bytes and lines:
+            lines.pop()
+            text = "\n".join(lines)
+
+        return text
 
 
 def discover_taxonomy(documents_dir: Path) -> Taxonomy:
@@ -126,14 +174,9 @@ def discover_taxonomy(documents_dir: Path) -> Taxonomy:
 
 
 def _enrich_taxonomy(documents_dir: Path, taxonomy: Taxonomy) -> Taxonomy:
-    """Add sample files from subfolders to the prompt text generation."""
-    # Override to_prompt_text with enriched version that includes subfolder samples
-    enriched_lines: list[str] = []
-
+    """Collect sample files from each subfolder and store in _subfolder_samples."""
     for folder in taxonomy.folders:
-        enriched_lines.append(f"{folder.name}/")
         folder_path = documents_dir / folder.name
-
         for sub in folder.subfolders:
             sub_path = folder_path / sub
             samples: list[str] = []
@@ -143,19 +186,7 @@ def _enrich_taxonomy(documents_dir: Path, taxonomy: Taxonomy) -> Taxonomy:
                         samples.append(f.name)
                         if len(samples) >= 3:
                             break
-            if samples:
-                example = ", ".join(samples)
-                enriched_lines.append(f"  ├── {sub}/ (e.g., {example})")
-            else:
-                enriched_lines.append(f"  ├── {sub}/")
+            key = f"{folder.name}/{sub}"
+            taxonomy._subfolder_samples[key] = samples
 
-        if folder.sample_files:
-            example = ", ".join(folder.sample_files[:3])
-            enriched_lines.append(f"  (root files: {example})")
-
-    # Store the enriched text
-    taxonomy._enriched_text = "\n".join(enriched_lines)
-    # Monkey-patch to_prompt_text to use enriched version
-    original_to_prompt = taxonomy.to_prompt_text
-    taxonomy.to_prompt_text = lambda: taxonomy._enriched_text  # type: ignore[assignment]
     return taxonomy

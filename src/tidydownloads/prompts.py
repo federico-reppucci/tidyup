@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from tidydownloads.taxonomy import Taxonomy
 
 CLASSIFICATION_PROMPT = """\
 You are a file organizer. Classify each file into one of the folders below, or mark it for deletion.
@@ -11,80 +15,47 @@ FOLDERS:
 {taxonomy}
 
 RULES:
-- "move": file belongs in a folder above. Use the EXACT folder path shown (e.g. "04 Education/MBA").
-- "delete": installer, temp file, incomplete download, or cache file.
-- confidence: 0.8-1.0 = obvious match, 0.5-0.7 = likely, 0.0-0.4 = guessing.
+- "move": file belongs in a folder above. Set destination to the EXACT folder path from FOLDERS list.
+- "delete": installer, temp file, incomplete download, cache file, or compiled binary (.pyc, .o, .exe, .dll).
+- Pick the folder whose name best matches the file's content or topic.
+- confidence: 0.7-1.0 = filename clearly matches, 0.5-0.6 = likely match, 0.3-0.4 = guessing.
+- When unsure, pick the most likely folder at 0.5 confidence.
 
-EXAMPLES:
-{examples}
+EXAMPLE:
+Input: report.pdf (application/pdf, 2 MB)
+Output: {{"file": "report.pdf", "action": "move", "destination": "{example_dest}", "reason": "report document", "confidence": 0.7}}
+Input: setup.dmg (application/x-apple-diskimage, 85 MB)
+Output: {{"file": "setup.dmg", "action": "delete", "destination": "", "reason": "installer", "confidence": 0.95}}
 
 FILES TO CLASSIFY:
 {file_list}
 
-Respond ONLY with JSON:
-{{"files": [{{"file": "<name>", "action": "move"|"delete", "destination": "<folder path>", "reason": "<why>", "confidence": <0-1>}}]}}
+Respond ONLY with valid JSON (no text before or after):
+{{"files": [{{"file": "<name>", "action": "move"|"delete", "destination": "<exact folder path from FOLDERS>", "reason": "<short reason>", "confidence": <0.0-1.0>}}]}}
 """
-
-# Generic examples that work with any taxonomy — they demonstrate output
-# format and reasoning, not specific folder names.
-FEW_SHOT_EXAMPLES = [
-    {
-        "input": "quarterly-report-Q3.pdf (application/pdf, 2.1 MB)",
-        "output": {
-            "file": "quarterly-report-Q3.pdf",
-            "action": "move",
-            "destination": "Work",
-            "reason": "Business quarterly report",
-            "confidence": 0.8,
-        },
-    },
-    {
-        "input": "chrome-installer.dmg (application/x-apple-diskimage, 85 MB)",
-        "output": {
-            "file": "chrome-installer.dmg",
-            "action": "delete",
-            "destination": "",
-            "reason": "macOS disk image installer",
-            "confidence": 0.95,
-        },
-    },
-    {
-        "input": "ml-notes.ipynb (application/json, 340 KB) — content preview: import pandas as pd...",
-        "output": {
-            "file": "ml-notes.ipynb",
-            "action": "move",
-            "destination": "Education/Learning",
-            "reason": "Machine learning study notebook",
-            "confidence": 0.75,
-        },
-    },
-]
-
-
-def _format_examples() -> str:
-    """Format few-shot examples for the prompt."""
-    lines: list[str] = []
-    for ex in FEW_SHOT_EXAMPLES:
-        lines.append(f"Input: {ex['input']}")
-        lines.append(f"Output: {json.dumps(ex['output'])}")
-        lines.append("")
-    return "\n".join(lines).rstrip()
 
 
 def build_classification_prompt(
     taxonomy_text: str,
     file_descriptions: list[str],
+    taxonomy: Taxonomy | None = None,
 ) -> str:
     """Build the full classification prompt with taxonomy and file list."""
+    # Pick a middle-of-the-list folder for the example to avoid biasing first/last
+    example_dest = "Work"
+    if taxonomy and taxonomy.folders:
+        mid = len(taxonomy.folders) // 2
+        example_dest = taxonomy.folders[mid].name
+
     file_list = "\n".join(f"- {desc}" for desc in file_descriptions)
     return CLASSIFICATION_PROMPT.format(
         taxonomy=taxonomy_text,
         file_list=file_list,
-        examples=_format_examples(),
+        example_dest=example_dest,
     )
 
 
-# --- Stage 2: Subfolder refinement prompt ---
+# --- Stage 2: Subfolder refinement prompt (kept for backward compat) ---
 
 SUBFOLDER_PROMPT = """\
 These files belong in the "{folder}" folder. Pick the best subfolder for each file.
