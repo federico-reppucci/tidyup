@@ -4,7 +4,7 @@ class Tidydownloads < Formula
   desc "Local AI-powered download organizer using Ollama"
   homepage "https://github.com/federico-reppucci/tidydownloads"
   url "https://github.com/federico-reppucci/tidydownloads/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 ""  # TODO: fill after `git tag v0.1.0 && git push --tags`
+  sha256 "0019dfc4b32d63c1392aa264aed2253c1e0c2fb09216f8e2cc269bbfb8bb49b5"
   license "MIT"
 
   depends_on "python@3.12"
