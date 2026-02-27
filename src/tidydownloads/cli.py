@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-import sys
+import shutil
 import webbrowser
 
 from tidydownloads.config import Config
@@ -102,10 +102,98 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _check_ollama_setup(config: Config, dry_run: bool = False):
+    """Ensure Ollama is running and the model is available.
+
+    Returns a ready backend (ParallelOllamaBackend or OllamaBackend),
+    or None if setup fails.
+    """
+    from tidydownloads.classifier import OllamaBackend, ParallelOllamaBackend
+    from tidydownloads.ollama_client import OllamaClient, OllamaError
+
+    # 1. Check ollama binary
+    if not shutil.which("ollama"):
+        print(
+            "Ollama is not installed.\n\n"
+            "  Install:  brew install ollama\n"
+            "  Start:    brew services start ollama\n"
+            "  Then run: tidydownloads scan"
+        )
+        return None
+
+    # 2. Ensure server is running
+    client = OllamaClient(config.ollama_url, config.ollama_model)
+    first_run = not config.proposals_path.exists()
+
+    if first_run:
+        print("TidyDownloads — First-time setup\n")
+
+    try:
+        if first_run:
+            print("  Ollama: starting...", end=" ", flush=True)
+        client.ensure_running()
+        if first_run:
+            print("ok")
+    except OllamaError as e:
+        if first_run:
+            print("failed")
+        print(f"Error: {e}")
+        return None
+
+    # 3. Check model availability
+    if not client.is_model_available():
+        if dry_run:
+            print(f"Warning: model '{config.ollama_model}' not available, "
+                  "classification may fail.")
+        elif first_run:
+            # First run: auto-pull without prompt
+            print(f"  Model:  downloading {config.ollama_model}...")
+            try:
+                client.pull_model()
+            except OllamaError as e:
+                print(f"Error: {e}")
+                return None
+            print(f"  Model:  {config.ollama_model} ready")
+        else:
+            # Not first run: interactive prompt (user switched models)
+            answer = input(
+                f"Model '{config.ollama_model}' not found. Download it? [y/N] "
+            ).strip().lower()
+            if answer in ("y", "yes"):
+                print(f"Pulling {config.ollama_model}...")
+                try:
+                    client.pull_model()
+                except OllamaError as e:
+                    print(f"Error: {e}")
+                    return None
+                print(f"Model '{config.ollama_model}' ready.\n")
+            else:
+                print("Aborted.")
+                return None
+
+    # 4. Parallel support tip
+    num_parallel = client.check_parallel_support()
+    if num_parallel == 0:
+        if first_run:
+            print("  Tip:    for faster scans, set OLLAMA_NUM_PARALLEL=4 before starting Ollama")
+            print()
+
+    # 5. Build backend
+    if config.parallel_requests > 1:
+        backend = ParallelOllamaBackend(
+            client,
+            mini_batch=config.mini_batch_size,
+            workers=config.parallel_requests,
+        )
+    else:
+        backend = OllamaBackend(client)
+
+    return backend
+
+
 def cmd_scan(config: Config, dry_run: bool = False) -> int:
     from tidydownloads.apple_fm_client import AppleFMClient, AppleFMError
-    from tidydownloads.classifier import OllamaBackend, ParallelOllamaBackend, classify_files
-    from tidydownloads.ollama_client import OllamaClient, OllamaError
+    from tidydownloads.classifier import OllamaBackend, classify_files
     from tidydownloads.scanner import scan_downloads
     from tidydownloads.stager import check_stale_staging, stage_files
     from tidydownloads.taxonomy import discover_taxonomy
@@ -129,35 +217,9 @@ def cmd_scan(config: Config, dry_run: bool = False) -> int:
             return 1
         backend = OllamaBackend(apple_client)
     else:
-        client = OllamaClient(config.ollama_url, config.ollama_model)
-        try:
-            client.ensure_running()
-            if not client.is_model_available():
-                if dry_run:
-                    print(f"Warning: model '{config.ollama_model}' not available, "
-                          "classification may fail.")
-                else:
-                    answer = input(
-                        f"Model '{config.ollama_model}' not found. Download it? [y/N] "
-                    ).strip().lower()
-                    if answer in ("y", "yes"):
-                        print(f"Pulling {config.ollama_model}...")
-                        client.pull_model()
-                        print(f"Model '{config.ollama_model}' ready.\n")
-                    else:
-                        print("Aborted.")
-                        return 1
-        except OllamaError as e:
-            print(f"Error: {e}")
+        backend = _check_ollama_setup(config, dry_run)
+        if backend is None:
             return 1
-        if config.parallel_requests > 1:
-            backend = ParallelOllamaBackend(
-                client,
-                mini_batch=config.mini_batch_size,
-                workers=config.parallel_requests,
-            )
-        else:
-            backend = OllamaBackend(client)
 
     # Scan
     files = scan_downloads(config)

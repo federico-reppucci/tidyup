@@ -71,7 +71,12 @@ class OllamaClient:
                 stderr=subprocess.DEVNULL,
             )
         except FileNotFoundError:
-            raise OllamaError("Ollama not found. Install with: brew install ollama")
+            raise OllamaError(
+                "Ollama is not installed.\n\n"
+                "  Install:  brew install ollama\n"
+                "  Start:    brew services start ollama\n"
+                "  Then run: tidydownloads scan"
+            )
 
         deadline = time.monotonic() + STARTUP_TIMEOUT
         while time.monotonic() < deadline:
