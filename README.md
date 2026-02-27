@@ -13,28 +13,39 @@ Local AI-powered download organizer. Scans `~/Downloads`, classifies files using
 4. **`tidydownloads status`** — Shows Ollama status and last run stats
 5. **`tidydownloads benchmark`** — Compares model accuracy and speed on your real files
 
-## Prerequisites
+## Install
+
+### Homebrew (recommended)
+
+```bash
+brew tap federico-reppucci/tidydownloads https://github.com/federico-reppucci/tidydownloads.git
+brew install tidydownloads
+```
+
+This automatically installs Ollama, poppler, and Python. On first run, the default model is downloaded automatically:
+
+```bash
+tidydownloads scan
+```
+
+### From source
 
 ```bash
 brew install python@3.12 ollama poppler
-ollama pull gemma3:4b   # or gemma3:12b for better accuracy
-```
-
-For best parallel performance (recommended on machines with 16+ GB RAM):
-
-```bash
-launchctl setenv OLLAMA_NUM_PARALLEL 4
-# Then restart Ollama
-```
-
-## Install
-
-```bash
-git clone https://github.com/FedericoReppucci/tidydownloads.git
+git clone https://github.com/federico-reppucci/tidydownloads.git
 cd tidydownloads
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e .
+```
+
+### Parallel performance
+
+For faster scans on machines with 16+ GB RAM:
+
+```bash
+launchctl setenv OLLAMA_NUM_PARALLEL 4
+brew services restart ollama
 ```
 
 ## Usage
