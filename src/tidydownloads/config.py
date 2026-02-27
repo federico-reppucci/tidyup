@@ -15,12 +15,14 @@ class Config:
         default_factory=lambda: Path.home() / ".local" / "share" / "tidydownloads"
     )
     ollama_url: str = "http://localhost:11434"
-    ollama_model: str = "gemma3:1b"
+    ollama_model: str = "gemma3:4b"
     excluded: list[str] = field(
         default_factory=lambda: [".DS_Store", ".localized", "*.tmp"]
     )
-    batch_size: int = 10
-    confidence_threshold: float = 0.7
+    batch_size: int = 25
+    confidence_threshold: float = 0.45
+    parallel_requests: int = 4
+    mini_batch_size: int = 5
     web_port: int = 8457
 
     @property

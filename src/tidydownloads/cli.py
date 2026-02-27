@@ -67,6 +67,10 @@ def main(argv: list[str] | None = None) -> int:
         "--timeout", type=int, default=20,
         help="Per-file timeout in seconds (default: 20)",
     )
+    bench_p.add_argument(
+        "--parallel", action=argparse.BooleanOptionalAction, default=True,
+        help="Enable parallel mini-batch classification (default: enabled)",
+    )
 
     args = parser.parse_args(argv)
 
@@ -93,14 +97,14 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "status":
         return cmd_status(config)
     elif args.command == "benchmark":
-        return cmd_benchmark(config, args.bench_models, args.files, args.seed, args.timeout)
+        return cmd_benchmark(config, args.bench_models, args.files, args.seed, args.timeout, args.parallel)
 
     return 0
 
 
 def cmd_scan(config: Config, dry_run: bool = False) -> int:
     from tidydownloads.apple_fm_client import AppleFMClient, AppleFMError
-    from tidydownloads.classifier import OllamaBackend, classify_files
+    from tidydownloads.classifier import OllamaBackend, ParallelOllamaBackend, classify_files
     from tidydownloads.ollama_client import OllamaClient, OllamaError
     from tidydownloads.scanner import scan_downloads
     from tidydownloads.stager import check_stale_staging, stage_files
@@ -146,7 +150,14 @@ def cmd_scan(config: Config, dry_run: bool = False) -> int:
         except OllamaError as e:
             print(f"Error: {e}")
             return 1
-        backend = OllamaBackend(client)
+        if config.parallel_requests > 1:
+            backend = ParallelOllamaBackend(
+                client,
+                mini_batch=config.mini_batch_size,
+                workers=config.parallel_requests,
+            )
+        else:
+            backend = OllamaBackend(client)
 
     # Scan
     files = scan_downloads(config)
@@ -273,8 +284,11 @@ def cmd_status(config: Config) -> int:
 
 def cmd_benchmark(
     config: Config, models: list[str], num_files: int, seed: int,
-    per_file_timeout: int = 20,
+    per_file_timeout: int = 20, parallel: bool = True,
 ) -> int:
     from tidydownloads.benchmark import run_benchmark
 
-    return run_benchmark(config, models, num_files, seed, per_file_timeout=per_file_timeout)
+    return run_benchmark(
+        config, models, num_files, seed,
+        per_file_timeout=per_file_timeout, parallel=parallel,
+    )

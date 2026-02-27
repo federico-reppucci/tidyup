@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import time
 import urllib.error
@@ -117,27 +118,46 @@ class OllamaClient:
             raise OllamaError(f"Model '{self.model}' not available after pull")
         log.info("Model %s pulled successfully", self.model)
 
+    def check_parallel_support(self) -> int:
+        """Check OLLAMA_NUM_PARALLEL from environment.
+
+        Returns the value if explicitly set, 0 otherwise.
+        Can't query this from the Ollama API, so we rely on the env var.
+        """
+        return int(os.environ.get("OLLAMA_NUM_PARALLEL", 0))
+
     def generate(
         self,
         prompt: str,
         timeout: int = GENERATE_TIMEOUT,
         on_token: Callable[[int], None] | None = None,
+        options: dict[str, Any] | None = None,
+        keep_alive: str | None = None,
     ) -> dict[str, Any]:
         """Send a prompt to Ollama and return parsed JSON response.
 
         Uses streaming to provide live progress via *on_token* and to
         enforce a socket-level *timeout* (applied per-chunk, so stalls
         are detected quickly).
+
+        *options* are merged with defaults (caller values take precedence).
+        *keep_alive* sets how long the model stays loaded after the request.
         """
-        payload = json.dumps({
+        merged_options: dict[str, Any] = {"temperature": 0.1}
+        if options:
+            merged_options.update(options)
+
+        payload_dict: dict[str, Any] = {
             "model": self.model,
             "prompt": prompt,
             "format": "json",
             "stream": True,
-            "options": {
-                "temperature": 0.1,
-            },
-        }).encode()
+            "options": merged_options,
+        }
+        if keep_alive:
+            payload_dict["keep_alive"] = keep_alive
+
+        payload = json.dumps(payload_dict).encode()
 
         req = urllib.request.Request(
             f"{self.base_url}/api/generate",

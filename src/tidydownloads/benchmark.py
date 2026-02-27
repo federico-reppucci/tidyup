@@ -6,6 +6,7 @@ Uses the file's real Documents path as ground truth for accuracy.
 from __future__ import annotations
 
 import json
+import logging
 import random
 import shutil
 import statistics
@@ -14,15 +15,21 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+log = logging.getLogger("tidydownloads")
+
 from tidydownloads.apple_fm_client import AppleFMClient, AppleFMError
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from tidydownloads.classifier import (
     Classification,
+    PREVIEW_CHARS,
+    _build_file_descriptions,
+    _precompute_previews,
+    _validate_destination,
     classify_files,
-    refine_subfolders,
     _parse_llm_response,
 )
 from tidydownloads.config import Config
-from tidydownloads.content import extract_preview
 from tidydownloads.ollama_client import (
     OllamaClient,
     OllamaError,
@@ -68,6 +75,9 @@ class TimedBackend:
         results: list[Classification] = []
         total_batches = (len(files) + config.batch_size - 1) // config.batch_size
 
+        # Pre-compute content previews in parallel
+        previews = _precompute_previews(files)
+
         for batch_idx in range(0, len(files), config.batch_size):
             batch = files[batch_idx : batch_idx + config.batch_size]
             batch_num = batch_idx // config.batch_size + 1
@@ -83,16 +93,11 @@ class TimedBackend:
                     end="", flush=True,
                 )
 
-            file_descriptions = []
-            for f in batch:
-                desc = f"{f.name} ({f.mime_type}, {f.size_human})"
-                preview = extract_preview(f.path)
-                if preview:
-                    desc += f" — content preview: {preview[:200].replace(chr(10), ' ')}"
-                file_descriptions.append(desc)
+            file_descriptions = _build_file_descriptions(batch, previews)
 
+            taxonomy_text = taxonomy.to_midsize_text()
             prompt = build_classification_prompt(
-                taxonomy.to_compact_text(), file_descriptions
+                taxonomy_text, file_descriptions, taxonomy=taxonomy,
             )
             self.r.prompt_lengths.append(len(prompt))
 
@@ -107,7 +112,12 @@ class TimedBackend:
                 self.r.batch_sizes.append(len(batch))
                 self.r.total_llm_time += elapsed
                 print(f"\r    {label} {elapsed:.1f}s ({len(batch)/elapsed:.1f} f/s)")
-                results.extend(_parse_llm_response(response, batch))
+                batch_results = _parse_llm_response(response, batch)
+                # Validate destinations against taxonomy
+                for r in batch_results:
+                    if r.action == "move" and r.destination:
+                        r.destination = _validate_destination(r.destination, taxonomy)
+                results.extend(batch_results)
             except _LLM_ERRORS as e:
                 elapsed = time.perf_counter() - t0
                 self.r.batch_times.append(elapsed)
@@ -125,27 +135,113 @@ class TimedBackend:
                         Classification(f.name, "unsorted", "", reason, 0.0, "llm")
                     )
 
-        # Stage 2: refine subfolder assignments
-        file_info_map = {f.name: f for f in files}
-        print("    Stage 2: refining subfolder assignments...")
-        t_s2 = time.perf_counter()
+        return results
 
-        def on_stage2_progress(prefix: str, n: int) -> None:
-            frame = SPINNER[n % len(SPINNER)] if n else ""
-            tok = f" {n} tokens" if n else ""
-            print(f"\r    {prefix} {frame}{tok}", end="", flush=True)
 
-        results = refine_subfolders(
-            self.client, results, taxonomy, file_info_map,
-            per_file_timeout=self.per_file_timeout,
-            on_progress=on_stage2_progress,
+class ParallelTimedBackend:
+    """Parallel mini-batch LLM backend with timing."""
+
+    def __init__(
+        self,
+        client: Any,
+        result: BenchResult,
+        mini_batch: int = 5,
+        workers: int = 4,
+        per_file_timeout: int = PER_FILE_TIMEOUT,
+    ):
+        self.client = client
+        self.r = result
+        self.mini_batch = mini_batch
+        self.workers = workers
+        self.per_file_timeout = per_file_timeout
+
+    def classify(
+        self, files: list[FileInfo], taxonomy: Taxonomy, config: Config,
+    ) -> list[Classification]:
+        previews = _precompute_previews(files)
+        taxonomy_text = taxonomy.to_midsize_text()
+        batches = [
+            files[i : i + self.mini_batch]
+            for i in range(0, len(files), self.mini_batch)
+        ]
+
+        print(
+            f"    Parallel: {len(batches)} mini-batches × {self.mini_batch} files, "
+            f"{self.workers} workers"
         )
-        s2_elapsed = time.perf_counter() - t_s2
-        self.r.stage2_time = s2_elapsed
-        self.r.total_llm_time += s2_elapsed
-        print(f"    Stage 2 done in {s2_elapsed:.1f}s")
+
+        results: list[Classification] = []
+        t_wall_start = time.perf_counter()
+
+        with ThreadPoolExecutor(max_workers=self.workers) as pool:
+            futures = {
+                pool.submit(
+                    self._classify_batch, b, taxonomy_text, taxonomy, previews,
+                    idx + 1, len(batches),
+                ): b
+                for idx, b in enumerate(batches)
+            }
+            for fut in as_completed(futures):
+                batch = futures[fut]
+                try:
+                    batch_results, elapsed = fut.result()
+                    self.r.batch_times.append(elapsed)
+                    self.r.batch_sizes.append(len(batch))
+                    self.r.total_llm_time += elapsed
+                    results.extend(batch_results)
+                    print(
+                        f"    Batch done: {len(batch)} files in {elapsed:.1f}s "
+                        f"({len(batch)/elapsed:.1f} f/s)"
+                    )
+                except Exception as e:
+                    log.error("Batch failed: %s", e)
+                    for f in batch:
+                        results.append(
+                            Classification(f.name, "unsorted", "", f"batch error: {e}", 0.0, "llm")
+                        )
+
+        wall_time = time.perf_counter() - t_wall_start
+        print(
+            f"    Parallel wall time: {wall_time:.1f}s "
+            f"({len(files)/wall_time:.1f} files/s)"
+        )
 
         return results
+
+    def _classify_batch(
+        self,
+        batch: list[FileInfo],
+        taxonomy_text: str,
+        taxonomy: Taxonomy,
+        previews: dict[str, str],
+        batch_num: int,
+        total: int,
+    ) -> tuple[list[Classification], float]:
+        """Classify one mini-batch (runs in thread). Returns (results, elapsed)."""
+        t0 = time.perf_counter()
+
+        file_descriptions = _build_file_descriptions(batch, previews)
+        prompt = build_classification_prompt(
+            taxonomy_text, file_descriptions, taxonomy=taxonomy,
+        )
+        self.r.prompt_lengths.append(len(prompt))
+
+        num_predict = len(batch) * 60 + 50
+        batch_timeout = len(batch) * self.per_file_timeout
+
+        response = self.client.generate(
+            prompt, timeout=batch_timeout,
+            options={"num_predict": num_predict, "num_ctx": 4096, "top_k": 20},
+            keep_alive="10m",
+        )
+
+        batch_results = _parse_llm_response(response, batch)
+        for r in batch_results:
+            if r.action == "move" and r.destination:
+                r.destination = _validate_destination(r.destination, taxonomy)
+
+        elapsed = time.perf_counter() - t0
+        return batch_results, elapsed
 
 
 # ── Helpers ─────────────────────────────────────────────────
@@ -260,9 +356,11 @@ def accuracy_score(
 def run_model(
     model: str, files: list[FileInfo], taxonomy: Taxonomy, config: Config,
     per_file_timeout: int = PER_FILE_TIMEOUT,
+    parallel: bool = False,
 ) -> BenchResult:
     """Run classification for one model and return metrics."""
-    result = BenchResult(model=model)
+    label = f"{model} (parallel)" if parallel else model
+    result = BenchResult(model=label)
 
     if model == "apple":
         client: Any = AppleFMClient()
@@ -273,6 +371,7 @@ def run_model(
                 "Requires macOS 26+ with Apple Intelligence and afm-cli installed."
             )
         print("ok")
+        parallel = False  # Apple FM doesn't support parallel
     else:
         config.ollama_model = model
         client = OllamaClient(config.ollama_url, model)
@@ -283,7 +382,23 @@ def run_model(
             client.pull_model()
         print("ok")
 
-    backend = TimedBackend(client, result, per_file_timeout=per_file_timeout)
+        if parallel:
+            num_parallel = client.check_parallel_support()
+            if not num_parallel:
+                print(
+                    "  Tip: For best parallel performance, set "
+                    "OLLAMA_NUM_PARALLEL=4 before starting Ollama"
+                )
+
+    if parallel:
+        backend: Any = ParallelTimedBackend(
+            client, result,
+            mini_batch=config.mini_batch_size,
+            workers=config.parallel_requests,
+            per_file_timeout=per_file_timeout,
+        )
+    else:
+        backend = TimedBackend(client, result, per_file_timeout=per_file_timeout)
 
     t0 = time.perf_counter()
     result.classifications = classify_files(files, taxonomy, config, backend=backend)
@@ -315,9 +430,7 @@ def print_comparison(results: list[BenchResult], ground_truth: dict[str, str]) -
 
     rows = [
         ("Total time", [f"{r.total_time:.1f}s" for r in results]),
-        ("LLM time (stage 1)", [f"{r.total_llm_time - r.stage2_time:.1f}s" for r in results]),
-        ("LLM time (stage 2)", [f"{r.stage2_time:.1f}s" for r in results]),
-        ("LLM time (total)", [f"{r.total_llm_time:.1f}s" for r in results]),
+        ("LLM time", [f"{r.total_llm_time:.1f}s" for r in results]),
         ("Files/sec (overall)", [f"{len(r.classifications)/r.total_time:.2f}" for r in results]),
         ("Files/sec (LLM only)", [f"{sum(1 for c in r.classifications if c.method=='llm')/r.total_llm_time:.2f}" if r.total_llm_time else "n/a" for r in results]),
         ("Avg batch time", [f"{statistics.mean(r.batch_times):.1f}s" if r.batch_times else "n/a" for r in results]),
@@ -452,13 +565,15 @@ def print_comparison(results: list[BenchResult], ground_truth: dict[str, str]) -
 def run_benchmark(
     config: Config, models: list[str], num_files: int, seed: int,
     per_file_timeout: int = PER_FILE_TIMEOUT,
+    parallel: bool = True,
 ) -> int:
     """Run the benchmark and return an exit code."""
+    mode = "parallel" if parallel else "sequential"
     print(f"{'='*70}")
     print(f"  TidyDownloads — Model Comparison Benchmark")
     print(f"  Models: {' vs '.join(models)}")
     print(f"  Files: {num_files}  |  Seed: {seed}  |  Batch size: {config.batch_size}"
-          f"  |  Timeout: {per_file_timeout}s/file")
+          f"  |  Timeout: {per_file_timeout}s/file  |  Mode: {mode}")
     print(f"{'='*70}\n")
 
     # ── Collect & copy ──
@@ -495,7 +610,10 @@ def run_benchmark(
         all_results: list[BenchResult] = []
         for i, model in enumerate(models):
             print(f"\n[3/4] Running model {i+1}/{len(models)}: {model}")
-            result = run_model(model, files, taxonomy, config, per_file_timeout=per_file_timeout)
+            result = run_model(
+                model, files, taxonomy, config,
+                per_file_timeout=per_file_timeout, parallel=parallel,
+            )
             all_results.append(result)
             print(f"  → {result.total_time:.1f}s total, "
                   f"{len(result.classifications)/result.total_time:.2f} files/s")
