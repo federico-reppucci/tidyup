@@ -8,6 +8,15 @@ import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+__all__ = [
+    "JournalEntry",
+    "UndoResult",
+    "get_entries",
+    "get_last_operation",
+    "record_move",
+    "undo_last",
+]
+
 log = logging.getLogger("tidydownloads")
 
 
@@ -52,9 +61,7 @@ def get_entries(log_path: Path) -> list[JournalEntry]:
     return entries
 
 
-def get_last_operation(
-    log_path: Path, operation_filter: str | None = None
-) -> list[JournalEntry]:
+def get_last_operation(log_path: Path, operation_filter: str | None = None) -> list[JournalEntry]:
     """Get entries from the most recent batch (same scan_id), optionally filtered."""
     entries = get_entries(log_path)
     active = [e for e in entries if not e.undone]
@@ -70,9 +77,7 @@ def get_last_operation(
     return [e for e in active if e.scan_id == last_scan_id]
 
 
-def undo_last(
-    log_path: Path, operation_filter: str | None = None
-) -> UndoResult:
+def undo_last(log_path: Path, operation_filter: str | None = None) -> UndoResult:
     """Reverse the most recent batch of moves."""
     batch = get_last_operation(log_path, operation_filter)
     if not batch:

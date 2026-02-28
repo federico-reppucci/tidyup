@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import secrets
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from flask import Flask, abort, jsonify, render_template, request
@@ -12,6 +12,8 @@ from flask import Flask, abort, jsonify, render_template, request
 from tidydownloads.config import Config
 from tidydownloads.journal import JournalEntry, record_move
 from tidydownloads.mover import MoveError, move_file_safely
+
+__all__ = ["create_app"]
 
 
 def create_app(config: Config) -> tuple[Flask, str]:
@@ -37,7 +39,7 @@ def create_app(config: Config) -> tuple[Flask, str]:
             return []
         try:
             data = json.loads(proposals_path.read_text())
-            return data.get("proposals", [])
+            return data.get("proposals", [])  # type: ignore[no-any-return]
         except (json.JSONDecodeError, OSError):
             return []
 
@@ -88,7 +90,7 @@ def create_app(config: Config) -> tuple[Flask, str]:
             abort(400, "Cannot accept unsorted file — no destination assigned")
 
         dest_dir = config.documents_dir / proposal["destination"]
-        scan_id = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        scan_id = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
 
         try:
             final_path = move_file_safely(staged_path, dest_dir)
@@ -117,7 +119,7 @@ def create_app(config: Config) -> tuple[Flask, str]:
     def accept_all():
         check_token()
         proposals = _load_proposals()
-        scan_id = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        scan_id = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
         accepted = 0
         errors: list[str] = []
 
@@ -170,7 +172,7 @@ def create_app(config: Config) -> tuple[Flask, str]:
 
         # Move back to Downloads root
         original = Path(proposal["original_path"])
-        scan_id = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        scan_id = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
 
         try:
             final_path = move_file_safely(staged_path, original.parent)

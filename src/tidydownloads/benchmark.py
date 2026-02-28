@@ -11,34 +11,32 @@ import random
 import shutil
 import statistics
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-log = logging.getLogger("tidydownloads")
-
 from tidydownloads.apple_fm_client import AppleFMClient, AppleFMError
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-from tidydownloads.classifier import (
-    Classification,
-    PREVIEW_CHARS,
-    _build_file_descriptions,
-    _precompute_previews,
-    _validate_destination,
-    classify_files,
-    _parse_llm_response,
-)
+from tidydownloads.classifier import classify_files
 from tidydownloads.config import Config
+from tidydownloads.helpers import (
+    Classification,
+    build_file_descriptions,
+    parse_llm_response,
+    precompute_previews,
+    validate_destination,
+)
 from tidydownloads.ollama_client import (
-    OllamaClient,
-    OllamaError,
     PER_FILE_TIMEOUT,
     SPINNER,
+    OllamaClient,
+    OllamaError,
 )
 from tidydownloads.prompts import build_classification_prompt
 from tidydownloads.scanner import FileInfo, scan_downloads
 from tidydownloads.taxonomy import Taxonomy, discover_taxonomy
+
+log = logging.getLogger("tidydownloads")
 
 _LLM_ERRORS = (OllamaError, AppleFMError)
 
@@ -62,7 +60,9 @@ class TimedBackend:
     """LLM backend that records per-batch timing."""
 
     def __init__(
-        self, client: Any, result: BenchResult,
+        self,
+        client: Any,
+        result: BenchResult,
         per_file_timeout: int = PER_FILE_TIMEOUT,
     ):
         self.client = client
@@ -76,7 +76,7 @@ class TimedBackend:
         total_batches = (len(files) + config.batch_size - 1) // config.batch_size
 
         # Pre-compute content previews in parallel
-        previews = _precompute_previews(files)
+        previews = precompute_previews(files)
 
         for batch_idx in range(0, len(files), config.batch_size):
             batch = files[batch_idx : batch_idx + config.batch_size]
@@ -90,14 +90,17 @@ class TimedBackend:
                 frame = SPINNER[n % len(SPINNER)]
                 print(
                     f"\r    {_label} {frame} {n} tokens ({elapsed:.1f}s)",
-                    end="", flush=True,
+                    end="",
+                    flush=True,
                 )
 
-            file_descriptions = _build_file_descriptions(batch, previews)
+            file_descriptions = build_file_descriptions(batch, previews)
 
             taxonomy_text = taxonomy.to_midsize_text()
             prompt = build_classification_prompt(
-                taxonomy_text, file_descriptions, taxonomy=taxonomy,
+                taxonomy_text,
+                file_descriptions,
+                taxonomy=taxonomy,
             )
             self.r.prompt_lengths.append(len(prompt))
 
@@ -105,18 +108,20 @@ class TimedBackend:
 
             try:
                 response = self.client.generate(
-                    prompt, timeout=batch_timeout, on_token=on_token,
+                    prompt,
+                    timeout=batch_timeout,
+                    on_token=on_token,
                 )
                 elapsed = time.perf_counter() - t0
                 self.r.batch_times.append(elapsed)
                 self.r.batch_sizes.append(len(batch))
                 self.r.total_llm_time += elapsed
-                print(f"\r    {label} {elapsed:.1f}s ({len(batch)/elapsed:.1f} f/s)")
-                batch_results = _parse_llm_response(response, batch)
+                print(f"\r    {label} {elapsed:.1f}s ({len(batch) / elapsed:.1f} f/s)")
+                batch_results = parse_llm_response(response, batch)
                 # Validate destinations against taxonomy
                 for r in batch_results:
                     if r.action == "move" and r.destination:
-                        r.destination = _validate_destination(r.destination, taxonomy)
+                        r.destination = validate_destination(r.destination, taxonomy)
                 results.extend(batch_results)
             except _LLM_ERRORS as e:
                 elapsed = time.perf_counter() - t0
@@ -131,9 +136,7 @@ class TimedBackend:
                     else f"LLM error: {e}"
                 )
                 for f in batch:
-                    results.append(
-                        Classification(f.name, "unsorted", "", reason, 0.0, "llm")
-                    )
+                    results.append(Classification(f.name, "unsorted", "", reason, 0.0, "llm"))
 
         return results
 
@@ -156,17 +159,17 @@ class ParallelTimedBackend:
         self.per_file_timeout = per_file_timeout
 
     def classify(
-        self, files: list[FileInfo], taxonomy: Taxonomy, config: Config,
+        self,
+        files: list[FileInfo],
+        taxonomy: Taxonomy,
+        config: Config,
     ) -> list[Classification]:
-        previews = _precompute_previews(files)
+        previews = precompute_previews(files)
         taxonomy_text = taxonomy.to_midsize_text()
-        batches = [
-            files[i : i + self.mini_batch]
-            for i in range(0, len(files), self.mini_batch)
-        ]
+        batches = [files[i : i + self.mini_batch] for i in range(0, len(files), self.mini_batch)]
 
         print(
-            f"    Parallel: {len(batches)} mini-batches × {self.mini_batch} files, "
+            f"    Parallel: {len(batches)} mini-batches x{self.mini_batch} files, "
             f"{self.workers} workers"
         )
 
@@ -176,8 +179,13 @@ class ParallelTimedBackend:
         with ThreadPoolExecutor(max_workers=self.workers) as pool:
             futures = {
                 pool.submit(
-                    self._classify_batch, b, taxonomy_text, taxonomy, previews,
-                    idx + 1, len(batches),
+                    self._classify_batch,
+                    b,
+                    taxonomy_text,
+                    taxonomy,
+                    previews,
+                    idx + 1,
+                    len(batches),
                 ): b
                 for idx, b in enumerate(batches)
             }
@@ -191,7 +199,7 @@ class ParallelTimedBackend:
                     results.extend(batch_results)
                     print(
                         f"    Batch done: {len(batch)} files in {elapsed:.1f}s "
-                        f"({len(batch)/elapsed:.1f} f/s)"
+                        f"({len(batch) / elapsed:.1f} f/s)"
                     )
                 except Exception as e:
                     log.error("Batch failed: %s", e)
@@ -201,10 +209,7 @@ class ParallelTimedBackend:
                         )
 
         wall_time = time.perf_counter() - t_wall_start
-        print(
-            f"    Parallel wall time: {wall_time:.1f}s "
-            f"({len(files)/wall_time:.1f} files/s)"
-        )
+        print(f"    Parallel wall time: {wall_time:.1f}s ({len(files) / wall_time:.1f} files/s)")
 
         return results
 
@@ -220,9 +225,11 @@ class ParallelTimedBackend:
         """Classify one mini-batch (runs in thread). Returns (results, elapsed)."""
         t0 = time.perf_counter()
 
-        file_descriptions = _build_file_descriptions(batch, previews)
+        file_descriptions = build_file_descriptions(batch, previews)
         prompt = build_classification_prompt(
-            taxonomy_text, file_descriptions, taxonomy=taxonomy,
+            taxonomy_text,
+            file_descriptions,
+            taxonomy=taxonomy,
         )
         self.r.prompt_lengths.append(len(prompt))
 
@@ -230,15 +237,16 @@ class ParallelTimedBackend:
         batch_timeout = len(batch) * self.per_file_timeout
 
         response = self.client.generate(
-            prompt, timeout=batch_timeout,
+            prompt,
+            timeout=batch_timeout,
             options={"num_predict": num_predict, "num_ctx": 4096, "top_k": 20},
             keep_alive="10m",
         )
 
-        batch_results = _parse_llm_response(response, batch)
+        batch_results = parse_llm_response(response, batch)
         for r in batch_results:
             if r.action == "move" and r.destination:
-                r.destination = _validate_destination(r.destination, taxonomy)
+                r.destination = validate_destination(r.destination, taxonomy)
 
         elapsed = time.perf_counter() - t0
         return batch_results, elapsed
@@ -246,13 +254,13 @@ class ParallelTimedBackend:
 
 # ── Helpers ─────────────────────────────────────────────────
 
+
 def collect_files(docs_dir: Path, target: int, seed: int) -> list[tuple[Path, str]]:
     """Return (source_path, relative_parent) tuples. Fixed seed for reproducibility."""
     candidates = [
-        f for f in docs_dir.rglob("*")
-        if f.is_file()
-        and not f.name.startswith(".")
-        and 0 < f.stat().st_size < 50_000_000
+        f
+        for f in docs_dir.rglob("*")
+        if f.is_file() and not f.name.startswith(".") and 0 < f.stat().st_size < 50_000_000
     ]
     rng = random.Random(seed)
     rng.shuffle(candidates)
@@ -287,11 +295,12 @@ def cleanup(paths: list[Path]) -> None:
 
 
 def fmt_size(n: int) -> str:
+    size: float = n
     for u in ("B", "KB", "MB", "GB"):
-        if n < 1024:
-            return f"{n:.1f} {u}"
-        n /= 1024
-    return f"{n:.1f} TB"
+        if size < 1024:
+            return f"{size:.1f} {u}"
+        size /= 1024
+    return f"{size:.1f} TB"
 
 
 def accuracy_score(
@@ -311,10 +320,15 @@ def accuracy_score(
         actual = ground_truth.get(c.filename, "")
         if c.action != "move":
             not_moved += 1
-            details.append({
-                "file": c.filename, "action": c.action,
-                "predicted": "", "actual": actual, "match": "n/a",
-            })
+            details.append(
+                {
+                    "file": c.filename,
+                    "action": c.action,
+                    "predicted": "",
+                    "actual": actual,
+                    "match": "n/a",
+                }
+            )
             continue
 
         predicted = c.destination.rstrip("/")
@@ -322,22 +336,37 @@ def accuracy_score(
 
         if predicted == actual_clean:
             exact += 1
-            details.append({
-                "file": c.filename, "action": "move",
-                "predicted": predicted, "actual": actual_clean, "match": "exact",
-            })
+            details.append(
+                {
+                    "file": c.filename,
+                    "action": "move",
+                    "predicted": predicted,
+                    "actual": actual_clean,
+                    "match": "exact",
+                }
+            )
         elif predicted.split("/")[0] == actual_clean.split("/")[0]:
             top_match += 1
-            details.append({
-                "file": c.filename, "action": "move",
-                "predicted": predicted, "actual": actual_clean, "match": "top-folder",
-            })
+            details.append(
+                {
+                    "file": c.filename,
+                    "action": "move",
+                    "predicted": predicted,
+                    "actual": actual_clean,
+                    "match": "top-folder",
+                }
+            )
         else:
             wrong += 1
-            details.append({
-                "file": c.filename, "action": "move",
-                "predicted": predicted, "actual": actual_clean, "match": "wrong",
-            })
+            details.append(
+                {
+                    "file": c.filename,
+                    "action": "move",
+                    "predicted": predicted,
+                    "actual": actual_clean,
+                    "match": "wrong",
+                }
+            )
 
     moved = exact + top_match + wrong
     return {
@@ -354,7 +383,10 @@ def accuracy_score(
 
 
 def run_model(
-    model: str, files: list[FileInfo], taxonomy: Taxonomy, config: Config,
+    model: str,
+    files: list[FileInfo],
+    taxonomy: Taxonomy,
+    config: Config,
     per_file_timeout: int = PER_FILE_TIMEOUT,
     parallel: bool = False,
 ) -> BenchResult:
@@ -364,7 +396,7 @@ def run_model(
 
     if model == "apple":
         client: Any = AppleFMClient()
-        print(f"  Checking Apple FM availability...", end=" ", flush=True)
+        print("  Checking Apple FM availability...", end=" ", flush=True)
         if not client.is_available():
             raise AppleFMError(
                 "Apple Foundation Model not available. "
@@ -378,7 +410,7 @@ def run_model(
         print(f"  Ensuring {model} is ready...", end=" ", flush=True)
         client.ensure_running()
         if not client.is_model_available():
-            print(f"pulling...", end=" ", flush=True)
+            print("pulling...", end=" ", flush=True)
             client.pull_model()
         print("ok")
 
@@ -392,7 +424,8 @@ def run_model(
 
     if parallel:
         backend: Any = ParallelTimedBackend(
-            client, result,
+            client,
+            result,
             mini_batch=config.mini_batch_size,
             workers=config.parallel_requests,
             per_file_timeout=per_file_timeout,
@@ -410,31 +443,43 @@ def run_model(
 
 # ── Reporting ───────────────────────────────────────────────
 
+
 def print_comparison(results: list[BenchResult], ground_truth: dict[str, str]) -> None:
     labels = [r.model for r in results]
-    w = max(len(l) for l in labels) + 2  # column width
+    w = max(len(lbl) for lbl in labels) + 2  # column width
 
-    print(f"\n{'='*70}")
-    print(f"  HEAD-TO-HEAD COMPARISON")
-    print(f"{'='*70}\n")
+    print(f"\n{'=' * 70}")
+    print("  HEAD-TO-HEAD COMPARISON")
+    print(f"{'=' * 70}\n")
 
     # ── Speed ──
     print(f"  {'SPEED':<30s}", end="")
-    for l in labels:
-        print(f" {l:>{w}s}", end="")
+    for lbl in labels:
+        print(f" {lbl:>{w}s}", end="")
     print()
-    print(f"  {'-'*30}", end="")
+    print(f"  {'-' * 30}", end="")
     for _ in labels:
-        print(f" {'-'*w}", end="")
+        print(f" {'-' * w}", end="")
     print()
 
     rows = [
         ("Total time", [f"{r.total_time:.1f}s" for r in results]),
         ("LLM time", [f"{r.total_llm_time:.1f}s" for r in results]),
-        ("Files/sec (overall)", [f"{len(r.classifications)/r.total_time:.2f}" for r in results]),
-        ("Files/sec (LLM only)", [f"{sum(1 for c in r.classifications if c.method=='llm')/r.total_llm_time:.2f}" if r.total_llm_time else "n/a" for r in results]),
-        ("Avg batch time", [f"{statistics.mean(r.batch_times):.1f}s" if r.batch_times else "n/a" for r in results]),
-        ("Speedup vs first", [f"{results[0].total_time/r.total_time:.1f}x" for r in results]),
+        ("Files/sec (overall)", [f"{len(r.classifications) / r.total_time:.2f}" for r in results]),
+        (
+            "Files/sec (LLM only)",
+            [
+                f"{sum(1 for c in r.classifications if c.method == 'llm') / r.total_llm_time:.2f}"
+                if r.total_llm_time
+                else "n/a"
+                for r in results
+            ],
+        ),
+        (
+            "Avg batch time",
+            [f"{statistics.mean(r.batch_times):.1f}s" if r.batch_times else "n/a" for r in results],
+        ),
+        ("Speedup vs first", [f"{results[0].total_time / r.total_time:.1f}x" for r in results]),
     ]
     for label, vals in rows:
         print(f"  {label:<30s}", end="")
@@ -447,18 +492,21 @@ def print_comparison(results: list[BenchResult], ground_truth: dict[str, str]) -
 
     print()
     print(f"  {'ACCURACY':<30s}", end="")
-    for l in labels:
-        print(f" {l:>{w}s}", end="")
+    for lbl in labels:
+        print(f" {lbl:>{w}s}", end="")
     print()
-    print(f"  {'-'*30}", end="")
+    print(f"  {'-' * 30}", end="")
     for _ in labels:
-        print(f" {'-'*w}", end="")
+        print(f" {'-' * w}", end="")
     print()
 
     acc_rows = [
         ("Files moved", [str(a["moved"]) for a in accuracies]),
         ("Exact path match", [f"{a['exact']} ({a['exact_pct']:.0f}%)" for a in accuracies]),
-        ("Top-folder match", [f"{a['exact']+a['top_match']} ({a['top_pct']:.0f}%)" for a in accuracies]),
+        (
+            "Top-folder match",
+            [f"{a['exact'] + a['top_match']} ({a['top_pct']:.0f}%)" for a in accuracies],
+        ),
         ("Wrong destination", [str(a["wrong"]) for a in accuracies]),
         ("Not moved", [str(a["not_moved"]) for a in accuracies]),
     ]
@@ -471,12 +519,12 @@ def print_comparison(results: list[BenchResult], ground_truth: dict[str, str]) -
     # ── Action distribution ──
     print()
     print(f"  {'ACTION DISTRIBUTION':<30s}", end="")
-    for l in labels:
-        print(f" {l:>{w}s}", end="")
+    for lbl in labels:
+        print(f" {lbl:>{w}s}", end="")
     print()
-    print(f"  {'-'*30}", end="")
+    print(f"  {'-' * 30}", end="")
     for _ in labels:
-        print(f" {'-'*w}", end="")
+        print(f" {'-' * w}", end="")
     print()
 
     for action in ("move", "delete", "unsorted", "skip"):
@@ -493,12 +541,12 @@ def print_comparison(results: list[BenchResult], ground_truth: dict[str, str]) -
     # ── Confidence ──
     print()
     print(f"  {'CONFIDENCE (LLM files)':<30s}", end="")
-    for l in labels:
-        print(f" {l:>{w}s}", end="")
+    for lbl in labels:
+        print(f" {lbl:>{w}s}", end="")
     print()
-    print(f"  {'-'*30}", end="")
+    print(f"  {'-' * 30}", end="")
     for _ in labels:
-        print(f" {'-'*w}", end="")
+        print(f" {'-' * w}", end="")
     print()
 
     for stat_name, fn in [("Mean", statistics.mean), ("Median", statistics.median)]:
@@ -527,19 +575,19 @@ def print_comparison(results: list[BenchResult], ground_truth: dict[str, str]) -
             elif ca.action == "move" and cb.action == "move" and ca.destination != cb.destination:
                 disagree_dest.append((fname, ca, cb))
 
-        print(f"\n  MODEL DISAGREEMENTS")
-        print(f"  {'-'*66}")
+        print("\n  MODEL DISAGREEMENTS")
+        print(f"  {'-' * 66}")
         print(f"  Action disagreements: {len(disagree_action)}")
         print(f"  Destination disagreements (both move): {len(disagree_dest)}")
 
         if disagree_action:
-            print(f"\n  Action Disagreements (showing first 15):")
+            print("\n  Action Disagreements (showing first 15):")
             print(f"    {'File':<35s} {labels[0]:>12s} {labels[1]:>12s}")
             for fname, ca, cb in disagree_action[:15]:
                 print(f"    {fname:<35s} {ca.action:>12s} {cb.action:>12s}")
 
         if disagree_dest:
-            print(f"\n  Destination Disagreements (showing first 15):")
+            print("\n  Destination Disagreements (showing first 15):")
             print(f"    {'File':<30s} {'Actual':<20s} {labels[0]:<20s} {labels[1]:<20s}")
             for fname, ca, cb in disagree_dest[:15]:
                 actual = ground_truth.get(fname, "?")
@@ -549,7 +597,7 @@ def print_comparison(results: list[BenchResult], ground_truth: dict[str, str]) -
                 print(f"    {fname:<30s} {act_short:<20s} {a_short:<20s} {b_short:<20s}")
 
     # ── Accuracy detail: wrong destinations ──
-    for r, acc in zip(results, accuracies):
+    for r, acc in zip(results, accuracies, strict=True):
         wrongs = [d for d in acc["details"] if d["match"] == "wrong"]
         if wrongs:
             print(f"\n  WRONG DESTINATIONS — {r.model} (showing first 15):")
@@ -557,24 +605,30 @@ def print_comparison(results: list[BenchResult], ground_truth: dict[str, str]) -
             for d in wrongs[:15]:
                 print(f"    {d['file']:<30s} {d['predicted'][:19]:<20s} {d['actual'][:19]:<20s}")
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
 
 
 # ── Entry point ─────────────────────────────────────────────
 
+
 def run_benchmark(
-    config: Config, models: list[str], num_files: int, seed: int,
+    config: Config,
+    models: list[str],
+    num_files: int,
+    seed: int,
     per_file_timeout: int = PER_FILE_TIMEOUT,
     parallel: bool = True,
 ) -> int:
     """Run the benchmark and return an exit code."""
     mode = "parallel" if parallel else "sequential"
-    print(f"{'='*70}")
-    print(f"  TidyDownloads — Model Comparison Benchmark")
+    print(f"{'=' * 70}")
+    print("  TidyDownloads — Model Comparison Benchmark")
     print(f"  Models: {' vs '.join(models)}")
-    print(f"  Files: {num_files}  |  Seed: {seed}  |  Batch size: {config.batch_size}"
-          f"  |  Timeout: {per_file_timeout}s/file  |  Mode: {mode}")
-    print(f"{'='*70}\n")
+    print(
+        f"  Files: {num_files}  |  Seed: {seed}  |  Batch size: {config.batch_size}"
+        f"  |  Timeout: {per_file_timeout}s/file  |  Mode: {mode}"
+    )
+    print(f"{'=' * 70}\n")
 
     # ── Collect & copy ──
     print(f"[1/4] Collecting files from Documents (seed={seed})...")
@@ -594,7 +648,7 @@ def run_benchmark(
     print(f"  {len(source_files)} files ({fmt_size(total_size)})")
     print(f"  Extensions: {', '.join(f'{e}({c})' for e, c in top_exts)}")
 
-    print(f"\n[2/4] Copying to Downloads...")
+    print("\n[2/4] Copying to Downloads...")
     copied = copy_files(source_files, config.downloads_dir)
     print(f"  Copied {len(copied)} files")
 
@@ -609,37 +663,49 @@ def run_benchmark(
         # ── Run each model ──
         all_results: list[BenchResult] = []
         for i, model in enumerate(models):
-            print(f"\n[3/4] Running model {i+1}/{len(models)}: {model}")
+            print(f"\n[3/4] Running model {i + 1}/{len(models)}: {model}")
             result = run_model(
-                model, files, taxonomy, config,
-                per_file_timeout=per_file_timeout, parallel=parallel,
+                model,
+                files,
+                taxonomy,
+                config,
+                per_file_timeout=per_file_timeout,
+                parallel=parallel,
             )
             all_results.append(result)
-            print(f"  → {result.total_time:.1f}s total, "
-                  f"{len(result.classifications)/result.total_time:.2f} files/s")
+            print(
+                f"  → {result.total_time:.1f}s total, "
+                f"{len(result.classifications) / result.total_time:.2f} files/s"
+            )
 
         # ── Compare ──
-        print(f"\n[4/4] Generating comparison...")
+        print("\n[4/4] Generating comparison...")
         print_comparison(all_results, ground_truth)
 
         # ── Save raw results ──
         out_path = config.data_dir / "benchmark_results.json"
         raw = []
         for r in all_results:
-            raw.append({
-                "model": r.model,
-                "total_time": round(r.total_time, 2),
-                "llm_time": round(r.total_llm_time, 2),
-                "stage2_time": round(r.stage2_time, 2),
-                "files": len(r.classifications),
-                "batch_times": [round(t, 2) for t in r.batch_times],
-                "classifications": [
-                    {"file": c.filename, "action": c.action,
-                     "destination": c.destination, "confidence": c.confidence,
-                     "reason": c.reason}
-                    for c in r.classifications
-                ],
-            })
+            raw.append(
+                {
+                    "model": r.model,
+                    "total_time": round(r.total_time, 2),
+                    "llm_time": round(r.total_llm_time, 2),
+                    "stage2_time": round(r.stage2_time, 2),
+                    "files": len(r.classifications),
+                    "batch_times": [round(t, 2) for t in r.batch_times],
+                    "classifications": [
+                        {
+                            "file": c.filename,
+                            "action": c.action,
+                            "destination": c.destination,
+                            "confidence": c.confidence,
+                            "reason": c.reason,
+                        }
+                        for c in r.classifications
+                    ],
+                }
+            )
         out_path.write_text(json.dumps(raw, indent=2))
         print(f"\n  Raw results saved to {out_path}")
 

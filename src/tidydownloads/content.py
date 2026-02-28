@@ -6,17 +6,53 @@ import logging
 import subprocess
 from pathlib import Path
 
+__all__ = [
+    "MAX_CHARS",
+    "TEXTUTIL_EXTENSIONS",
+    "TEXT_EXTENSIONS",
+    "TIMEOUT",
+    "extract_metadata",
+    "extract_preview",
+]
+
 log = logging.getLogger("tidydownloads")
 
 TIMEOUT = 5  # seconds for subprocess calls
 MAX_CHARS = 500
 
 TEXT_EXTENSIONS = {
-    ".txt", ".md", ".csv", ".json", ".xml", ".yaml", ".yml",
-    ".py", ".js", ".ts", ".html", ".css", ".sh", ".bash",
-    ".rb", ".go", ".rs", ".java", ".c", ".cpp", ".h", ".hpp",
-    ".toml", ".ini", ".cfg", ".conf", ".log", ".sql",
-    ".m", ".swift", ".r", ".tex",
+    ".txt",
+    ".md",
+    ".csv",
+    ".json",
+    ".xml",
+    ".yaml",
+    ".yml",
+    ".py",
+    ".js",
+    ".ts",
+    ".html",
+    ".css",
+    ".sh",
+    ".bash",
+    ".rb",
+    ".go",
+    ".rs",
+    ".java",
+    ".c",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".log",
+    ".sql",
+    ".m",
+    ".swift",
+    ".r",
+    ".tex",
 }
 
 # Extensions that textutil can convert to plain text
@@ -70,11 +106,15 @@ def extract_metadata(path: Path, max_chars: int = MAX_CHARS) -> str:
         args.append(str(path))
 
         result = subprocess.run(
-            args, capture_output=True, text=True, timeout=TIMEOUT,
+            args,
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT,
         )
         if result.returncode == 0:
             lines = [
-                line.strip() for line in result.stdout.splitlines()
+                line.strip()
+                for line in result.stdout.splitlines()
                 if "(null)" not in line and "=" in line
             ]
             return "\n".join(lines)[:max_chars]
@@ -88,7 +128,9 @@ def _extract_pdf(path: Path, max_chars: int) -> str:
     try:
         result = subprocess.run(
             ["pdftotext", str(path), "-"],
-            capture_output=True, text=True, timeout=TIMEOUT,
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT,
         )
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout[:max_chars].strip()
@@ -106,7 +148,9 @@ def _extract_textutil(path: Path, max_chars: int) -> str:
     try:
         result = subprocess.run(
             ["textutil", "-stdout", "-convert", "txt", str(path)],
-            capture_output=True, text=True, timeout=TIMEOUT,
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT,
         )
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout[:max_chars].strip()

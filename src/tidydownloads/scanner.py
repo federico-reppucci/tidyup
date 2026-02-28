@@ -10,6 +10,8 @@ from pathlib import Path
 
 from tidydownloads.config import Config
 
+__all__ = ["FileInfo", "scan_downloads"]
+
 log = logging.getLogger("tidydownloads")
 
 
@@ -24,7 +26,7 @@ class FileInfo:
 
     @property
     def size_human(self) -> str:
-        size = self.size
+        size: float = self.size
         for unit in ("B", "KB", "MB", "GB"):
             if size < 1024:
                 return f"{size:.1f} {unit}"
@@ -39,7 +41,6 @@ def scan_downloads(config: Config) -> list[FileInfo]:
         log.error("Downloads directory not found: %s", downloads)
         return []
 
-    skip_dirs = {config.staging_delete.name, config.staging_move.name}
     files: list[FileInfo] = []
 
     for entry in sorted(downloads.iterdir()):
@@ -63,14 +64,16 @@ def scan_downloads(config: Config) -> list[FileInfo]:
         mime_type, _ = mimetypes.guess_type(entry.name)
         stat = entry.stat()
 
-        files.append(FileInfo(
-            name=entry.name,
-            path=entry,
-            extension=entry.suffix.lower(),
-            size=stat.st_size,
-            modified_time=stat.st_mtime,
-            mime_type=mime_type or "application/octet-stream",
-        ))
+        files.append(
+            FileInfo(
+                name=entry.name,
+                path=entry,
+                extension=entry.suffix.lower(),
+                size=stat.st_size,
+                modified_time=stat.st_mtime,
+                mime_type=mime_type or "application/octet-stream",
+            )
+        )
 
     log.info("Scanning... (%d files found)", len(files))
     return files

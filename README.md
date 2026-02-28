@@ -127,8 +127,17 @@ Override defaults in `~/.config/tidydownloads/config.json`:
 
 ```bash
 pip install -e ".[dev]"
+
+# Tests
 pytest tests/ -v
 pytest tests/ -v --cov=src/tidydownloads --cov-report=html
+
+# Lint & format
+ruff format --check src/ tests/
+ruff check src/ tests/
+
+# Type check
+mypy src/tidydownloads/
 ```
 
 ## License

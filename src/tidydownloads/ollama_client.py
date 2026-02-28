@@ -12,6 +12,16 @@ import urllib.request
 from collections.abc import Callable
 from typing import Any
 
+__all__ = [
+    "GENERATE_TIMEOUT",
+    "PER_FILE_TIMEOUT",
+    "SPINNER",
+    "STARTUP_TIMEOUT",
+    "OllamaClient",
+    "OllamaError",
+    "make_token_callback",
+]
+
 log = logging.getLogger("tidydownloads")
 
 GENERATE_TIMEOUT = 300  # seconds (larger models need more time)
@@ -23,9 +33,11 @@ SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 def make_token_callback(prefix: str) -> Callable[[int], None]:
     """Return a callback that prints a spinner + token count on the current line."""
+
     def on_token(n: int) -> None:
         frame = SPINNER[n % len(SPINNER)]
         print(f"\r  {prefix} {frame} {n} tokens", end="", flush=True)
+
     return on_token
 
 
@@ -70,13 +82,13 @@ class OllamaClient:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-        except FileNotFoundError:
+        except FileNotFoundError as e:
             raise OllamaError(
                 "Ollama is not installed.\n\n"
                 "  Install:  brew install ollama\n"
                 "  Start:    brew services start ollama\n"
                 "  Then run: tidydownloads scan"
-            )
+            ) from e
 
         deadline = time.monotonic() + STARTUP_TIMEOUT
         while time.monotonic() < deadline:
@@ -90,10 +102,12 @@ class OllamaClient:
     def pull_model(self) -> None:
         """Pull the configured model from Ollama. Streams progress to stderr."""
         log.info("Pulling model %s...", self.model)
-        payload = json.dumps({
-            "name": self.model,
-            "stream": True,
-        }).encode()
+        payload = json.dumps(
+            {
+                "name": self.model,
+                "stream": True,
+            }
+        ).encode()
 
         req = urllib.request.Request(
             f"{self.base_url}/api/pull",
@@ -117,7 +131,7 @@ class OllamaClient:
                     if data.get("error"):
                         raise OllamaError(data["error"])
         except urllib.error.URLError as e:
-            raise OllamaError(f"Failed to pull model: {e}")
+            raise OllamaError(f"Failed to pull model: {e}") from e
 
         if not self.is_model_available():
             raise OllamaError(f"Model '{self.model}' not available after pull")
@@ -179,9 +193,7 @@ class OllamaClient:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 for line in resp:
                     if time.monotonic() > deadline:
-                        raise OllamaError(
-                            f"Ollama request timed out ({timeout}s)"
-                        )
+                        raise OllamaError(f"Ollama request timed out ({timeout}s)")
                     try:
                         chunk = json.loads(line)
                     except json.JSONDecodeError:
@@ -199,12 +211,12 @@ class OllamaClient:
                     if chunk.get("done"):
                         break
 
-            return json.loads(response_text)
+            return json.loads(response_text)  # type: ignore[no-any-return]
         except urllib.error.URLError as e:
-            raise OllamaError(f"Failed to connect to Ollama: {e}")
+            raise OllamaError(f"Failed to connect to Ollama: {e}") from e
         except ConnectionError as e:
-            raise OllamaError(f"Ollama connection lost: {e}")
+            raise OllamaError(f"Ollama connection lost: {e}") from e
         except json.JSONDecodeError as e:
-            raise OllamaError(f"Invalid JSON from Ollama: {e}")
-        except TimeoutError:
-            raise OllamaError(f"Ollama request timed out ({timeout}s)")
+            raise OllamaError(f"Invalid JSON from Ollama: {e}") from e
+        except TimeoutError as e:
+            raise OllamaError(f"Ollama request timed out ({timeout}s)") from e

@@ -79,6 +79,8 @@ def sample_documents(tmp_config: Config) -> Config:
 @pytest.fixture
 def mock_ollama_response():
     """Factory for mock Ollama responses."""
+
     def _make(files_data: list[dict]) -> dict:
         return {"files": files_data}
+
     return _make

@@ -8,6 +8,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+__all__ = ["MoveError", "move_file_safely", "move_to_trash"]
+
 log = logging.getLogger("tidydownloads")
 
 
@@ -79,13 +81,11 @@ def move_to_trash(path: Path) -> bool:
         return False
 
     try:
-        script = (
-            f'tell application "Finder" to delete '
-            f'POSIX file "{path}"'
-        )
+        script = f'tell application "Finder" to delete POSIX file "{path}"'
         subprocess.run(
             ["osascript", "-e", script],
-            capture_output=True, timeout=10,
+            capture_output=True,
+            timeout=10,
         )
         return True
     except (subprocess.TimeoutExpired, OSError) as e:

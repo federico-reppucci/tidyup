@@ -6,41 +6,47 @@ import logging
 from collections import defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
-from typing import Protocol
-
-from typing import Any
+from typing import Any, Protocol
 
 from tidydownloads.apple_fm_client import AppleFMError
 from tidydownloads.config import Config
 from tidydownloads.content import extract_preview
+from tidydownloads.helpers import (
+    PREVIEW_CHARS,
+    Classification,
+    build_file_descriptions,
+    parse_llm_response,
+    precompute_previews,
+    validate_destination,
+)
 from tidydownloads.ollama_client import (
+    PER_FILE_TIMEOUT,
     OllamaClient,
     OllamaError,
-    PER_FILE_TIMEOUT,
-    SPINNER,
     make_token_callback,
 )
 from tidydownloads.prompts import build_classification_prompt, build_subfolder_prompt
 from tidydownloads.scanner import FileInfo
 from tidydownloads.taxonomy import FolderInfo, Taxonomy
 
+__all__ = [
+    "PREVIEW_CHARS",
+    "TIER1_CONFIDENCE",
+    "TIER1_DELETE",
+    "Classification",
+    "ClassifierBackend",
+    "OllamaBackend",
+    "ParallelOllamaBackend",
+    "RulesOnlyBackend",
+    "classify_files",
+    "classify_tier1",
+    "refine_subfolders",
+]
+
 # Errors from any LLM client
 _LLM_ERRORS = (OllamaError, AppleFMError)
 
 log = logging.getLogger("tidydownloads")
-
-PREVIEW_CHARS = 150
-
-
-@dataclass
-class Classification:
-    filename: str
-    action: str  # "move" | "delete" | "unsorted" | "skip"
-    destination: str  # Documents subfolder path (only for "move")
-    reason: str
-    confidence: float
-    method: str  # "rule" | "llm"
 
 
 # --- Tier 1: Rule-based classification ---
@@ -79,91 +85,8 @@ def classify_tier1(file_info: FileInfo) -> Classification | None:
     return None
 
 
-# --- Destination validation ---
-
-def _validate_destination(destination: str, taxonomy: Taxonomy) -> str:
-    """Fuzzy-match LLM output against valid taxonomy paths.
-
-    Match hierarchy: exact → stripped numeric prefix → partial match.
-    Returns the best matching valid path, or the original if no match found.
-    """
-    if not destination:
-        return destination
-
-    valid_paths = taxonomy.valid_paths()
-    dest_clean = destination.strip().rstrip("/")
-
-    # 1. Exact match
-    for path in valid_paths:
-        if path == dest_clean:
-            return path
-
-    # 2. Case-insensitive match
-    dest_lower = dest_clean.lower()
-    for path in valid_paths:
-        if path.lower() == dest_lower:
-            return path
-
-    # 3. Match ignoring numeric prefix (e.g. "Education/MBA" → "04 Education/MBA")
-    def strip_prefix(s: str) -> str:
-        parts = s.split("/")
-        return "/".join(p.lstrip("0123456789 ") for p in parts).lower()
-
-    dest_stripped = strip_prefix(dest_clean)
-    for path in valid_paths:
-        if strip_prefix(path) == dest_stripped:
-            return path
-
-    # 4. Top-folder only match — if LLM gave just the top folder name, resolve it
-    dest_top = dest_clean.split("/")[0].lower()
-    dest_top_stripped = dest_top.lstrip("0123456789 ")
-    for folder in taxonomy.folders:
-        folder_lower = folder.name.lower()
-        folder_stripped = folder.name.lstrip("0123456789 ").lower()
-        if folder_lower == dest_top or folder_stripped == dest_top_stripped:
-            # If the LLM also gave a subfolder, try to match it
-            parts = dest_clean.split("/", 1)
-            if len(parts) > 1:
-                sub_name = parts[1].lower()
-                for sub in folder.subfolders:
-                    if sub.lower() == sub_name:
-                        return f"{folder.name}/{sub}"
-            return folder.name
-
-    return dest_clean
-
-
-def _build_file_descriptions(
-    files: list[FileInfo], previews: dict[str, str],
-) -> list[str]:
-    """Build file description strings for the LLM prompt."""
-    descriptions = []
-    for f in files:
-        desc = f"{f.name} ({f.mime_type}, {f.size_human})"
-        preview = previews.get(f.name, "")
-        if preview:
-            preview_short = preview[:PREVIEW_CHARS].replace("\n", " ")
-            desc += f" — content preview: {preview_short}"
-        descriptions.append(desc)
-    return descriptions
-
-
-def _precompute_previews(files: list[FileInfo], max_workers: int = 4) -> dict[str, str]:
-    """Extract content previews in parallel."""
-    previews: dict[str, str] = {}
-
-    def _extract(f: FileInfo) -> tuple[str, str]:
-        return f.name, extract_preview(f.path)
-
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        for name, preview in pool.map(_extract, files):
-            if preview:
-                previews[name] = preview
-
-    return previews
-
-
 # --- Pluggable backend protocol ---
+
 
 class ClassifierBackend(Protocol):
     def classify(
@@ -172,6 +95,7 @@ class ClassifierBackend(Protocol):
 
 
 # --- Tier 2: Ollama LLM backend ---
+
 
 class OllamaBackend:
     """Uses local Ollama instance for classification."""
@@ -187,37 +111,44 @@ class OllamaBackend:
         total_batches = (len(files) + config.batch_size - 1) // config.batch_size
 
         # Pre-compute content previews in parallel
-        previews = _precompute_previews(files)
+        previews = precompute_previews(files)
         taxonomy_text = taxonomy.to_midsize_text()
 
         for batch_idx in range(0, len(files), config.batch_size):
-            batch = files[batch_idx:batch_idx + config.batch_size]
+            batch = files[batch_idx : batch_idx + config.batch_size]
             batch_num = batch_idx // config.batch_size + 1
             prefix = f"Classifying batch {batch_num}/{total_batches}..."
             on_token = make_token_callback(prefix)
 
-            file_descriptions = _build_file_descriptions(batch, previews)
+            file_descriptions = build_file_descriptions(batch, previews)
 
             prompt = build_classification_prompt(
-                taxonomy_text, file_descriptions, taxonomy=taxonomy,
+                taxonomy_text,
+                file_descriptions,
+                taxonomy=taxonomy,
             )
 
             batch_timeout = len(batch) * self.per_file_timeout
 
             try:
                 response = self.client.generate(
-                    prompt, timeout=batch_timeout, on_token=on_token,
+                    prompt,
+                    timeout=batch_timeout,
+                    on_token=on_token,
                 )
                 print(f"\r  Classifying batch {batch_num}/{total_batches}... done")
-                batch_results = _parse_llm_response(response, batch)
+                batch_results = parse_llm_response(response, batch)
                 # Validate destinations against taxonomy
                 for r in batch_results:
                     if r.action == "move" and r.destination:
-                        r.destination = _validate_destination(r.destination, taxonomy)
+                        r.destination = validate_destination(r.destination, taxonomy)
                 results.extend(batch_results)
             except _LLM_ERRORS as e:
                 is_timeout = "timed out" in str(e)
-                print(f"\r  Classifying batch {batch_num}/{total_batches}... {'TIMEOUT' if is_timeout else 'ERROR'}: {e}")
+                print(
+                    f"\r  Classifying batch {batch_num}/{total_batches}... "
+                    f"{'TIMEOUT' if is_timeout else 'ERROR'}: {e}"
+                )
                 log.error("LLM error on batch %d: %s", batch_num, e)
                 reason = (
                     f"LLM timeout ({batch_timeout}s per-file exceeded)"
@@ -225,14 +156,16 @@ class OllamaBackend:
                     else f"LLM error: {e}"
                 )
                 for f in batch:
-                    results.append(Classification(
-                        filename=f.name,
-                        action="unsorted",
-                        destination="",
-                        reason=reason,
-                        confidence=0.0,
-                        method="llm",
-                    ))
+                    results.append(
+                        Classification(
+                            filename=f.name,
+                            action="unsorted",
+                            destination="",
+                            reason=reason,
+                            confidence=0.0,
+                            method="llm",
+                        )
+                    )
 
         return results
 
@@ -253,15 +186,12 @@ class ParallelOllamaBackend:
     def classify(
         self, files: list[FileInfo], taxonomy: Taxonomy, config: Config
     ) -> list[Classification]:
-        previews = _precompute_previews(files)
+        previews = precompute_previews(files)
         taxonomy_text = taxonomy.to_midsize_text()
-        batches = [
-            files[i : i + self.mini_batch]
-            for i in range(0, len(files), self.mini_batch)
-        ]
+        batches = [files[i : i + self.mini_batch] for i in range(0, len(files), self.mini_batch)]
 
         print(
-            f"  Parallel: {len(batches)} mini-batches × {self.mini_batch} files, "
+            f"  Parallel: {len(batches)} mini-batches x{self.mini_batch} files, "
             f"{self.workers} workers"
         )
 
@@ -269,8 +199,13 @@ class ParallelOllamaBackend:
         with ThreadPoolExecutor(max_workers=self.workers) as pool:
             futures = {
                 pool.submit(
-                    self._classify_batch, b, taxonomy_text, taxonomy, previews,
-                    idx + 1, len(batches),
+                    self._classify_batch,
+                    b,
+                    taxonomy_text,
+                    taxonomy,
+                    previews,
+                    idx + 1,
+                    len(batches),
                 ): b
                 for idx, b in enumerate(batches)
             }
@@ -282,9 +217,9 @@ class ParallelOllamaBackend:
                 except Exception as e:
                     log.error("Batch failed: %s", e)
                     for f in batch:
-                        results.append(Classification(
-                            f.name, "unsorted", "", f"batch error: {e}", 0.0, "llm",
-                        ))
+                        results.append(
+                            Classification(f.name, "unsorted", "", f"batch error: {e}", 0.0, "llm")
+                        )
 
         print(f"  Parallel: done, {len(results)} files classified")
         return results
@@ -299,84 +234,30 @@ class ParallelOllamaBackend:
         total: int,
     ) -> list[Classification]:
         """Classify one mini-batch (runs in thread)."""
-        file_descriptions = _build_file_descriptions(batch, previews)
+        file_descriptions = build_file_descriptions(batch, previews)
         prompt = build_classification_prompt(
-            taxonomy_text, file_descriptions, taxonomy=taxonomy,
+            taxonomy_text,
+            file_descriptions,
+            taxonomy=taxonomy,
         )
         num_predict = len(batch) * 60 + 50
         batch_timeout = len(batch) * PER_FILE_TIMEOUT
 
         response = self.client.generate(
-            prompt, timeout=batch_timeout,
+            prompt,
+            timeout=batch_timeout,
             options={"num_predict": num_predict, "num_ctx": 4096, "top_k": 20},
             keep_alive="10m",
         )
-        batch_results = _parse_llm_response(response, batch)
+        batch_results = parse_llm_response(response, batch)
         for r in batch_results:
             if r.action == "move" and r.destination:
-                r.destination = _validate_destination(r.destination, taxonomy)
+                r.destination = validate_destination(r.destination, taxonomy)
         return batch_results
 
 
-def _parse_llm_response(
-    response: dict, batch: list[FileInfo]
-) -> list[Classification]:
-    """Parse LLM JSON response into Classification objects."""
-    results: list[Classification] = []
-    batch_names = {f.name for f in batch}
-
-    items = response.get("files", [])
-    if not isinstance(items, list):
-        log.warning("LLM returned non-list 'files' field")
-        return [
-            Classification(f.name, "skip", "", "LLM returned invalid format", 0.0, "llm")
-            for f in batch
-        ]
-
-    seen: set[str] = set()
-    for item in items:
-        filename = item.get("file", "")
-        if filename not in batch_names or filename in seen:
-            continue
-        seen.add(filename)
-
-        action = item.get("action", "")
-        if action not in ("move", "delete"):
-            action = "skip"
-
-        destination = item.get("destination", "") if action == "move" else ""
-        reason = item.get("reason", "")
-        try:
-            confidence = float(item.get("confidence", 0))
-        except (TypeError, ValueError):
-            confidence = 0.0
-        confidence = max(0.0, min(1.0, confidence))
-
-        results.append(Classification(
-            filename=filename,
-            action=action,
-            destination=destination,
-            reason=reason,
-            confidence=confidence,
-            method="llm",
-        ))
-
-    # Any files not in the response get skipped
-    for f in batch:
-        if f.name not in seen:
-            results.append(Classification(
-                filename=f.name,
-                action="skip",
-                destination="",
-                reason="Not classified by LLM",
-                confidence=0.0,
-                method="llm",
-            ))
-
-    return results
-
-
 # --- Stage 2: Subfolder refinement (kept for backward compat) ---
+
 
 def refine_subfolders(
     client: Any,  # OllamaClient or AppleFMClient — must have generate()
@@ -443,7 +324,11 @@ def refine_subfolders(
             response = client.generate(
                 prompt,
                 timeout=batch_timeout,
-                on_token=on_progress and (lambda n: on_progress(f"Refining {folder_info.name}/", n)),
+                on_token=(
+                    (lambda n, _fi=folder_info: on_progress(f"Refining {_fi.name}/", n))  # type: ignore[misc]
+                    if on_progress
+                    else None
+                ),
             )
 
             if on_progress:
@@ -451,7 +336,11 @@ def refine_subfolders(
 
             _apply_subfolder_response(response, folder_info, group)
         except _LLM_ERRORS as e:
-            log.warning("Stage 2 failed for %s: %s — keeping stage 1 destinations", folder_info.name, e)
+            log.warning(
+                "Stage 2 failed for %s: %s — keeping stage 1 destinations",
+                folder_info.name,
+                e,
+            )
             if on_progress:
                 print(f"\r  Refining {folder_info.name}/... skipped ({e})")
             # Keep stage 1 destination, just fix to actual folder name
@@ -462,7 +351,9 @@ def refine_subfolders(
 
 
 def _apply_subfolder_response(
-    response: dict, folder_info: FolderInfo, group: list[Classification],
+    response: dict,
+    folder_info: FolderInfo,
+    group: list[Classification],
 ) -> None:
     """Parse stage 2 response and update classification destinations."""
     items = response.get("files", [])
@@ -505,6 +396,7 @@ def _apply_subfolder_response(
 
 # --- Rules-only fallback backend ---
 
+
 class RulesOnlyBackend:
     """Extension-based rules only. No LLM. Fast but less accurate."""
 
@@ -517,18 +409,21 @@ class RulesOnlyBackend:
             if result:
                 results.append(result)
             else:
-                results.append(Classification(
-                    filename=f.name,
-                    action="skip",
-                    destination="",
-                    reason="Cannot classify without LLM",
-                    confidence=0.0,
-                    method="rule",
-                ))
+                results.append(
+                    Classification(
+                        filename=f.name,
+                        action="skip",
+                        destination="",
+                        reason="Cannot classify without LLM",
+                        confidence=0.0,
+                        method="rule",
+                    )
+                )
         return results
 
 
 # --- Main classify function ---
+
 
 def classify_files(
     files: list[FileInfo],
@@ -563,16 +458,12 @@ def classify_files(
 
     # Apply confidence threshold
     final: list[Classification] = list(tier1_results)
-    staged = 0
     skipped = 0
     for r in tier2_results:
         if r.confidence < config.confidence_threshold and r.action not in ("skip", "unsorted"):
             r.action = "unsorted"
             r.reason = f"Low confidence ({r.confidence:.2f}): {r.reason}"
             skipped += 1
-        else:
-            if r.action != "skip":
-                staged += 1
         final.append(r)
 
     if skipped:

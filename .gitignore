@@ -9,3 +9,4 @@ build/
 .pytest_cache/
 htmlcov/
 .coverage
+.ruff_cache/

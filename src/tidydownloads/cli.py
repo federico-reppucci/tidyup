@@ -15,20 +15,21 @@ def main(argv: list[str] | None = None) -> int:
         prog="tidydownloads",
         description="Local AI-powered download organizer",
     )
+    parser.add_argument("-v", "--verbose", action="store_true", help="Enable debug output")
     parser.add_argument(
-        "-v", "--verbose", action="store_true", help="Enable debug output"
-    )
-    parser.add_argument(
-        "--model", type=str, default=None,
+        "--model",
+        type=str,
+        default=None,
         help="LLM model to use: an Ollama model name (e.g. gemma3:1b) "
-             "or 'apple' for Apple Intelligence on-device model",
+        "or 'apple' for Apple Intelligence on-device model",
     )
     sub = parser.add_subparsers(dest="command")
 
     # scan
     scan_p = sub.add_parser("scan", help="Classify and stage files from Downloads")
     scan_p.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Print classifications without moving files",
     )
 
@@ -38,12 +39,8 @@ def main(argv: list[str] | None = None) -> int:
     # undo
     undo_p = sub.add_parser("undo", help="Reverse the last scan or review operation")
     undo_group = undo_p.add_mutually_exclusive_group()
-    undo_group.add_argument(
-        "--last-scan", action="store_true", help="Undo last scan staging"
-    )
-    undo_group.add_argument(
-        "--last-review", action="store_true", help="Undo last review operation"
-    )
+    undo_group.add_argument("--last-scan", action="store_true", help="Undo last scan staging")
+    undo_group.add_argument("--last-review", action="store_true", help="Undo last review operation")
 
     # status
     sub.add_parser("status", help="Check Ollama status and show last run stats")
@@ -51,24 +48,35 @@ def main(argv: list[str] | None = None) -> int:
     # benchmark
     bench_p = sub.add_parser("benchmark", help="Benchmark model accuracy and speed")
     bench_p.add_argument(
-        "--model", dest="bench_models", action="append", required=True,
+        "--model",
+        dest="bench_models",
+        action="append",
+        required=True,
         help="Model to benchmark (repeatable for comparison). "
-             "Use 'apple' for Apple Intelligence or an Ollama model name",
+        "Use 'apple' for Apple Intelligence or an Ollama model name",
     )
     bench_p.add_argument(
-        "--files", type=int, default=100,
+        "--files",
+        type=int,
+        default=100,
         help="Number of test files (default: 100)",
     )
     bench_p.add_argument(
-        "--seed", type=int, default=42,
+        "--seed",
+        type=int,
+        default=42,
         help="Random seed for reproducibility (default: 42)",
     )
     bench_p.add_argument(
-        "--timeout", type=int, default=20,
+        "--timeout",
+        type=int,
+        default=20,
         help="Per-file timeout in seconds (default: 20)",
     )
     bench_p.add_argument(
-        "--parallel", action=argparse.BooleanOptionalAction, default=True,
+        "--parallel",
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help="Enable parallel mini-batch classification (default: enabled)",
     )
 
@@ -97,7 +105,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "status":
         return cmd_status(config)
     elif args.command == "benchmark":
-        return cmd_benchmark(config, args.bench_models, args.files, args.seed, args.timeout, args.parallel)
+        return cmd_benchmark(
+            config, args.bench_models, args.files, args.seed, args.timeout, args.parallel
+        )
 
     return 0
 
@@ -143,8 +153,7 @@ def _check_ollama_setup(config: Config, dry_run: bool = False):
     # 3. Check model availability
     if not client.is_model_available():
         if dry_run:
-            print(f"Warning: model '{config.ollama_model}' not available, "
-                  "classification may fail.")
+            print(f"Warning: model '{config.ollama_model}' not available, classification may fail.")
         elif first_run:
             # First run: auto-pull without prompt
             print(f"  Model:  downloading {config.ollama_model}...")
@@ -156,9 +165,11 @@ def _check_ollama_setup(config: Config, dry_run: bool = False):
             print(f"  Model:  {config.ollama_model} ready")
         else:
             # Not first run: interactive prompt (user switched models)
-            answer = input(
-                f"Model '{config.ollama_model}' not found. Download it? [y/N] "
-            ).strip().lower()
+            answer = (
+                input(f"Model '{config.ollama_model}' not found. Download it? [y/N] ")
+                .strip()
+                .lower()
+            )
             if answer in ("y", "yes"):
                 print(f"Pulling {config.ollama_model}...")
                 try:
@@ -173,12 +184,12 @@ def _check_ollama_setup(config: Config, dry_run: bool = False):
 
     # 4. Parallel support tip
     num_parallel = client.check_parallel_support()
-    if num_parallel == 0:
-        if first_run:
-            print("  Tip:    for faster scans, set OLLAMA_NUM_PARALLEL=4 before starting Ollama")
-            print()
+    if num_parallel == 0 and first_run:
+        print("  Tip:    for faster scans, set OLLAMA_NUM_PARALLEL=4 before starting Ollama")
+        print()
 
     # 5. Build backend
+    backend: OllamaBackend | ParallelOllamaBackend
     if config.parallel_requests > 1:
         backend = ParallelOllamaBackend(
             client,
@@ -192,7 +203,7 @@ def _check_ollama_setup(config: Config, dry_run: bool = False):
 
 
 def cmd_scan(config: Config, dry_run: bool = False) -> int:
-    from tidydownloads.apple_fm_client import AppleFMClient, AppleFMError
+    from tidydownloads.apple_fm_client import AppleFMClient
     from tidydownloads.classifier import OllamaBackend, classify_files
     from tidydownloads.scanner import scan_downloads
     from tidydownloads.stager import check_stale_staging, stage_files
@@ -212,10 +223,12 @@ def cmd_scan(config: Config, dry_run: bool = False) -> int:
     if config.ollama_model == "apple":
         apple_client = AppleFMClient()
         if not apple_client.is_available():
-            print("Error: Apple Foundation Model not available. "
-                  "Requires macOS 26+ with Apple Intelligence and afm-cli installed.")
+            print(
+                "Error: Apple Foundation Model not available. "
+                "Requires macOS 26+ with Apple Intelligence and afm-cli installed."
+            )
             return 1
-        backend = OllamaBackend(apple_client)
+        backend = OllamaBackend(apple_client)  # type: ignore[arg-type]
     else:
         backend = _check_ollama_setup(config, dry_run)
         if backend is None:
@@ -240,14 +253,14 @@ def cmd_scan(config: Config, dry_run: bool = False) -> int:
     result = stage_files(classifications, config, dry_run=dry_run)
 
     # Summary
-    print(f"\nDone! Summary:")
+    print("\nDone! Summary:")
     print(f"  Staged for deletion: {result['delete_count']}")
     print(f"  Staged for move:     {result['move_count']}")
     print(f"  Unsorted:            {result['unsorted_count']}")
     print(f"  Skipped:             {result['skip_count']}")
 
     if not dry_run and (result["delete_count"] or result["move_count"] or result["unsorted_count"]):
-        print(f"\nNext: run 'tidydownloads review' to review proposals.")
+        print("\nNext: run 'tidydownloads review' to review proposals.")
 
     return 0
 
@@ -258,9 +271,9 @@ def cmd_review(config: Config) -> int:
     app, token = create_app(config)
     url = f"http://127.0.0.1:{config.web_port}/?token={token}"
 
-    print(f"Starting review server...")
+    print("Starting review server...")
     print(f"  URL: {url}")
-    print(f"  Press Ctrl+C to stop.\n")
+    print("  Press Ctrl+C to stop.\n")
 
     webbrowser.open(url)
 
@@ -308,9 +321,12 @@ def cmd_status(config: Config) -> int:
         if client.is_model_available():
             print(f"  Model:  {config.ollama_model} (available)")
         else:
-            print(f"  Model:  {config.ollama_model} (NOT FOUND — run: ollama pull {config.ollama_model})")
+            print(
+                f"  Model:  {config.ollama_model} "
+                f"(NOT FOUND -- run: ollama pull {config.ollama_model})"
+            )
     else:
-        print(f"  Ollama: not running")
+        print("  Ollama: not running")
 
     # Last scan
     if config.proposals_path.exists():
@@ -319,7 +335,7 @@ def cmd_status(config: Config) -> int:
             proposals = data.get("proposals", [])
             print(f"\n  Last scan: {data.get('scan_id', 'unknown')}")
             print(f"  Proposals: {len(proposals)}")
-            actions = {}
+            actions: dict[str, int] = {}
             for p in proposals:
                 a = p.get("action", "unknown")
                 actions[a] = actions.get(a, 0) + 1
@@ -328,7 +344,7 @@ def cmd_status(config: Config) -> int:
         except (json.JSONDecodeError, OSError):
             pass
     else:
-        print(f"\n  No previous scan found.")
+        print("\n  No previous scan found.")
 
     # Staging folders
     for folder in (config.staging_delete, config.staging_move, config.staging_unsorted):
@@ -345,12 +361,20 @@ def cmd_status(config: Config) -> int:
 
 
 def cmd_benchmark(
-    config: Config, models: list[str], num_files: int, seed: int,
-    per_file_timeout: int = 20, parallel: bool = True,
+    config: Config,
+    models: list[str],
+    num_files: int,
+    seed: int,
+    per_file_timeout: int = 20,
+    parallel: bool = True,
 ) -> int:
     from tidydownloads.benchmark import run_benchmark
 
     return run_benchmark(
-        config, models, num_files, seed,
-        per_file_timeout=per_file_timeout, parallel=parallel,
+        config,
+        models,
+        num_files,
+        seed,
+        per_file_timeout=per_file_timeout,
+        parallel=parallel,
     )

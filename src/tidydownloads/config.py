@@ -6,6 +6,8 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+__all__ = ["Config"]
+
 
 @dataclass
 class Config:
@@ -16,9 +18,7 @@ class Config:
     )
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "gemma3:4b"
-    excluded: list[str] = field(
-        default_factory=lambda: [".DS_Store", ".localized", "*.tmp"]
-    )
+    excluded: list[str] = field(default_factory=lambda: [".DS_Store", ".localized", "*.tmp"])
     batch_size: int = 25
     confidence_threshold: float = 0.45
     parallel_requests: int = 4
@@ -56,9 +56,7 @@ class Config:
     @classmethod
     def load(cls) -> Config:
         config = cls()
-        config_path = (
-            Path.home() / ".config" / "tidydownloads" / "config.json"
-        )
+        config_path = Path.home() / ".config" / "tidydownloads" / "config.json"
         if config_path.exists():
             overrides = json.loads(config_path.read_text())
             for key, value in overrides.items():

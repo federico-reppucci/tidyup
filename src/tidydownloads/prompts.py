@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -15,23 +14,27 @@ FOLDERS:
 {taxonomy}
 
 RULES:
-- "move": file belongs in a folder above. Set destination to the EXACT folder path from FOLDERS list.
-- "delete": installer, temp file, incomplete download, cache file, or compiled binary (.pyc, .o, .exe, .dll).
+- "move": file belongs in a folder above. Set destination to the EXACT path.
+- "delete": installer, temp file, incomplete download, cache, or binary.
 - Pick the folder whose name best matches the file's content or topic.
-- confidence: 0.7-1.0 = filename clearly matches, 0.5-0.6 = likely match, 0.3-0.4 = guessing.
+- confidence: 0.7-1.0 = clearly matches, 0.5-0.6 = likely, 0.3-0.4 = guess.
 - When unsure, pick the most likely folder at 0.5 confidence.
 
 EXAMPLE:
 Input: report.pdf (application/pdf, 2 MB)
-Output: {{"file": "report.pdf", "action": "move", "destination": "{example_dest}", "reason": "report document", "confidence": 0.7}}
+Output: {{"file": "report.pdf", "action": "move",
+"destination": "{example_dest}", "reason": "report", "confidence": 0.7}}
 Input: setup.dmg (application/x-apple-diskimage, 85 MB)
-Output: {{"file": "setup.dmg", "action": "delete", "destination": "", "reason": "installer", "confidence": 0.95}}
+Output: {{"file": "setup.dmg", "action": "delete",
+"destination": "", "reason": "installer", "confidence": 0.95}}
 
 FILES TO CLASSIFY:
 {file_list}
 
 Respond ONLY with valid JSON (no text before or after):
-{{"files": [{{"file": "<name>", "action": "move"|"delete", "destination": "<exact folder path from FOLDERS>", "reason": "<short reason>", "confidence": <0.0-1.0>}}]}}
+{{"files": [{{"file": "<name>", "action": "move"|"delete",
+"destination": "<exact path>", "reason": "<why>",
+"confidence": <0.0-1.0>}}]}}
 """
 
 

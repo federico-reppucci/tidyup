@@ -11,6 +11,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+__all__ = ["AppleFMClient", "AppleFMError"]
+
 log = logging.getLogger("tidydownloads")
 
 # Regex to strip markdown code fences: ```json ... ``` or ``` ... ```
@@ -40,7 +42,9 @@ class AppleFMClient:
         """
         # Write prompt to a temp file (afm-cli reads from --file)
         with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False,
+            mode="w",
+            suffix=".txt",
+            delete=False,
         ) as f:
             f.write(prompt)
             prompt_path = Path(f.name)
@@ -49,21 +53,19 @@ class AppleFMClient:
             result = subprocess.run(
                 [
                     "afm-cli",
-                    "--system-prompt", "Respond ONLY with valid JSON. No markdown, no explanation.",
-                    "--file", str(prompt_path),
+                    "--system-prompt",
+                    "Respond ONLY with valid JSON. No markdown, no explanation.",
+                    "--file",
+                    str(prompt_path),
                 ],
                 capture_output=True,
                 text=True,
                 timeout=timeout,
             )
-        except FileNotFoundError:
-            raise AppleFMError(
-                "afm-cli not found. Install with: brew install afm-cli"
-            )
-        except subprocess.TimeoutExpired:
-            raise AppleFMError(
-                f"Apple FM request timed out ({timeout}s)"
-            )
+        except FileNotFoundError as e:
+            raise AppleFMError("afm-cli not found. Install with: brew install afm-cli") from e
+        except subprocess.TimeoutExpired as e:
+            raise AppleFMError(f"Apple FM request timed out ({timeout}s)") from e
         finally:
             prompt_path.unlink(missing_ok=True)
 
@@ -82,15 +84,18 @@ class AppleFMClient:
             parsed = json.loads(text)
         except json.JSONDecodeError as e:
             log.debug("Raw afm-cli output: %s", stdout[:500])
-            raise AppleFMError(f"Invalid JSON from Apple FM: {e}")
+            raise AppleFMError(f"Invalid JSON from Apple FM: {e}") from e
 
         # Normalize: if the model returns a bare list, wrap it in {"files": [...]}
         if isinstance(parsed, list):
             return {"files": parsed}
-        return parsed
+        return parsed  # type: ignore[no-any-return]
 
     def is_available(self) -> bool:
-        """Check if afm-cli is installed (does NOT do a test generation — too slow on cold start)."""
+        """Check if afm-cli is installed.
+
+        Does NOT do a test generation — too slow on cold start.
+        """
         try:
             result = subprocess.run(
                 ["afm-cli", "--help"],

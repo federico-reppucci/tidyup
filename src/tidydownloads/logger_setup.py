@@ -14,9 +14,7 @@ def setup_logging(log_dir: Path, verbose: bool = False) -> logging.Logger:
     # File handler — always DEBUG
     fh = logging.FileHandler(log_dir / "tidydownloads.log")
     fh.setLevel(logging.DEBUG)
-    fh.setFormatter(logging.Formatter(
-        "%(asctime)s %(levelname)s %(name)s: %(message)s"
-    ))
+    fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     logger.addHandler(fh)
 
     # Stderr handler — INFO or DEBUG based on verbose flag

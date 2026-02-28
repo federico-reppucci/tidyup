@@ -12,13 +12,16 @@ from tidydownloads.journal import (
 def test_record_and_read(tmp_config):
     log_path = tmp_config.undo_log_path
 
-    record_move(JournalEntry(
-        timestamp="2026-01-01T00:00:00",
-        operation="scan_stage",
-        source="/Downloads/file.txt",
-        destination="/Downloads/to_move/file.txt",
-        scan_id="scan-1",
-    ), log_path)
+    record_move(
+        JournalEntry(
+            timestamp="2026-01-01T00:00:00",
+            operation="scan_stage",
+            source="/Downloads/file.txt",
+            destination="/Downloads/to_move/file.txt",
+            scan_id="scan-1",
+        ),
+        log_path,
+    )
 
     entries = get_entries(log_path)
     assert len(entries) == 1
@@ -30,21 +33,27 @@ def test_get_last_operation(tmp_config):
     log_path = tmp_config.undo_log_path
 
     for i in range(3):
-        record_move(JournalEntry(
-            timestamp="2026-01-01",
-            operation="scan_stage",
-            source=f"/Downloads/file{i}.txt",
-            destination=f"/Downloads/to_move/file{i}.txt",
-            scan_id="scan-1",
-        ), log_path)
+        record_move(
+            JournalEntry(
+                timestamp="2026-01-01",
+                operation="scan_stage",
+                source=f"/Downloads/file{i}.txt",
+                destination=f"/Downloads/to_move/file{i}.txt",
+                scan_id="scan-1",
+            ),
+            log_path,
+        )
 
-    record_move(JournalEntry(
-        timestamp="2026-01-02",
-        operation="review_accept",
-        source="/Downloads/to_move/file0.txt",
-        destination="/Documents/file0.txt",
-        scan_id="review-1",
-    ), log_path)
+    record_move(
+        JournalEntry(
+            timestamp="2026-01-02",
+            operation="review_accept",
+            source="/Downloads/to_move/file0.txt",
+            destination="/Documents/file0.txt",
+            scan_id="review-1",
+        ),
+        log_path,
+    )
 
     last = get_last_operation(log_path)
     assert len(last) == 1
@@ -54,21 +63,27 @@ def test_get_last_operation(tmp_config):
 def test_get_last_operation_filtered(tmp_config):
     log_path = tmp_config.undo_log_path
 
-    record_move(JournalEntry(
-        timestamp="2026-01-01",
-        operation="scan_stage",
-        source="/Downloads/file.txt",
-        destination="/Downloads/to_move/file.txt",
-        scan_id="scan-1",
-    ), log_path)
+    record_move(
+        JournalEntry(
+            timestamp="2026-01-01",
+            operation="scan_stage",
+            source="/Downloads/file.txt",
+            destination="/Downloads/to_move/file.txt",
+            scan_id="scan-1",
+        ),
+        log_path,
+    )
 
-    record_move(JournalEntry(
-        timestamp="2026-01-02",
-        operation="review_accept",
-        source="/Downloads/to_move/file.txt",
-        destination="/Documents/file.txt",
-        scan_id="review-1",
-    ), log_path)
+    record_move(
+        JournalEntry(
+            timestamp="2026-01-02",
+            operation="review_accept",
+            source="/Downloads/to_move/file.txt",
+            destination="/Documents/file.txt",
+            scan_id="review-1",
+        ),
+        log_path,
+    )
 
     last = get_last_operation(log_path, "scan")
     assert len(last) == 1
@@ -85,13 +100,16 @@ def test_undo_last(tmp_config):
     staged_file.write_text("content")
 
     log_path = tmp_config.undo_log_path
-    record_move(JournalEntry(
-        timestamp="2026-01-01",
-        operation="scan_stage",
-        source=str(dl / "file.txt"),
-        destination=str(staged_file),
-        scan_id="scan-1",
-    ), log_path)
+    record_move(
+        JournalEntry(
+            timestamp="2026-01-01",
+            operation="scan_stage",
+            source=str(dl / "file.txt"),
+            destination=str(staged_file),
+            scan_id="scan-1",
+        ),
+        log_path,
+    )
 
     result = undo_last(log_path)
     assert result.reversed_count == 1
@@ -113,13 +131,16 @@ def test_undo_marks_entries_as_undone(tmp_config):
     staged_file.write_text("content")
 
     log_path = tmp_config.undo_log_path
-    record_move(JournalEntry(
-        timestamp="2026-01-01",
-        operation="scan_stage",
-        source=str(dl / "file.txt"),
-        destination=str(staged_file),
-        scan_id="scan-1",
-    ), log_path)
+    record_move(
+        JournalEntry(
+            timestamp="2026-01-01",
+            operation="scan_stage",
+            source=str(dl / "file.txt"),
+            destination=str(staged_file),
+            scan_id="scan-1",
+        ),
+        log_path,
+    )
 
     undo_last(log_path)
 

@@ -21,18 +21,27 @@ pytest tests/test_classifier.py::test_tier1_dmg -v
 # Coverage
 pytest tests/ -v --cov=src/tidydownloads --cov-report=html
 
+# Lint & format
+ruff format --check src/ tests/
+ruff check src/ tests/
+
+# Type check
+mypy src/tidydownloads/
+
 # Run benchmark (requires Ollama running)
 PYTHONPATH=src .venv/bin/python -m tidydownloads benchmark --model gemma3:4b --files 20 --seed 42
 ```
 
-No linting tools are configured. Python 3.12+ required. Only dependency: Flask 3.0+.
+Python 3.12+ required. Runtime dependency: Flask 3.0+. Dev deps: pytest, ruff, mypy.
+
+ruff config: py312, line-length 100, select E,W,F,I,UP,B,SIM,RUF. mypy: check_untyped_defs, warn_return_any. CI runs on macOS (tests need `textutil`, `mdls`, `osascript`).
 
 ## Architecture
 
 ### Two-tier classification pipeline
 
 1. **Tier 1 (rules)**: Extension-based — `.dmg`, `.pkg`, `.torrent`, etc. get instant delete classification. Defined in `classifier.py` via `TIER1_DELETE` dict.
-2. **Tier 2 (LLM)**: Remaining files go to an LLM using a midsize taxonomy format (`taxonomy.to_midsize_text()`) that shows destination paths with sample filenames. `_validate_destination()` fuzzy-matches LLM output against valid taxonomy paths (exact → case-insensitive → stripped numeric prefix → top-folder).
+2. **Tier 2 (LLM)**: Remaining files go to an LLM using a midsize taxonomy format (`taxonomy.to_midsize_text()`) that shows destination paths with sample filenames. `validate_destination()` in `helpers.py` fuzzy-matches LLM output against valid taxonomy paths (exact → case-insensitive → stripped numeric prefix → top-folder).
 
 ### Parallel mini-batch classification
 
@@ -66,7 +75,8 @@ All LLM clients expose `generate(prompt, timeout, on_token, options=None, keep_a
 
 | Module | Role |
 |---|---|
-| `classifier.py` | `classify_files()`, `OllamaBackend`, `ParallelOllamaBackend`, `_validate_destination()`, `_parse_llm_response()` |
+| `helpers.py` | `Classification` dataclass, `validate_destination()`, `build_file_descriptions()`, `precompute_previews()`, `parse_llm_response()` |
+| `classifier.py` | Tier 1 rules, `ClassifierBackend` protocol, `OllamaBackend`, `ParallelOllamaBackend`, `RulesOnlyBackend`, `classify_files()`, `refine_subfolders()` |
 | `ollama_client.py` | HTTP client with streaming, auto-start, model pull, `check_parallel_support()`, `options`/`keep_alive` passthrough |
 | `apple_fm_client.py` | Apple FM client via `afm-cli` subprocess, strips markdown code fences |
 | `prompts.py` | LLM prompt templates (`build_classification_prompt`, `build_subfolder_prompt`) |

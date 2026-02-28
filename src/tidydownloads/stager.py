@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
 
 from tidydownloads.classifier import Classification
 from tidydownloads.config import Config
 from tidydownloads.journal import JournalEntry, record_move
 from tidydownloads.mover import move_file_safely
+
+__all__ = ["check_stale_staging", "stage_files"]
 
 log = logging.getLogger("tidydownloads")
 
@@ -20,10 +21,7 @@ def check_stale_staging(config: Config) -> list[str]:
     warnings: list[str] = []
     for folder in (config.staging_delete, config.staging_move, config.staging_unsorted):
         if folder.exists():
-            leftover = [
-                f.name for f in folder.iterdir()
-                if not f.name.startswith(".")
-            ]
+            leftover = [f.name for f in folder.iterdir() if not f.name.startswith(".")]
             if leftover:
                 warnings.append(
                     f"  {folder.name}/ has {len(leftover)} leftover files from a previous run"
@@ -37,7 +35,7 @@ def stage_files(
     dry_run: bool = False,
 ) -> dict:
     """Move classified files to staging folders and write proposals.json."""
-    scan_id = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    scan_id = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
     proposals: list[dict] = []
 
     delete_count = 0
@@ -60,16 +58,18 @@ def stage_files(
             dest = move_file_safely(source, config.staging_delete)
             if dest:
                 delete_count += 1
-                proposals.append({
-                    "filename": cls.filename,
-                    "staged_path": str(dest),
-                    "original_path": str(source),
-                    "action": "delete",
-                    "destination": "",
-                    "reason": cls.reason,
-                    "confidence": cls.confidence,
-                    "method": cls.method,
-                })
+                proposals.append(
+                    {
+                        "filename": cls.filename,
+                        "staged_path": str(dest),
+                        "original_path": str(source),
+                        "action": "delete",
+                        "destination": "",
+                        "reason": cls.reason,
+                        "confidence": cls.confidence,
+                        "method": cls.method,
+                    }
+                )
                 record_move(
                     JournalEntry(
                         timestamp=scan_id,
@@ -93,16 +93,18 @@ def stage_files(
             dest = move_file_safely(source, config.staging_move)
             if dest:
                 move_count += 1
-                proposals.append({
-                    "filename": cls.filename,
-                    "staged_path": str(dest),
-                    "original_path": str(source),
-                    "action": "move",
-                    "destination": cls.destination,
-                    "reason": cls.reason,
-                    "confidence": cls.confidence,
-                    "method": cls.method,
-                })
+                proposals.append(
+                    {
+                        "filename": cls.filename,
+                        "staged_path": str(dest),
+                        "original_path": str(source),
+                        "action": "move",
+                        "destination": cls.destination,
+                        "reason": cls.reason,
+                        "confidence": cls.confidence,
+                        "method": cls.method,
+                    }
+                )
                 record_move(
                     JournalEntry(
                         timestamp=scan_id,
@@ -123,16 +125,18 @@ def stage_files(
             dest = move_file_safely(source, config.staging_unsorted)
             if dest:
                 unsorted_count += 1
-                proposals.append({
-                    "filename": cls.filename,
-                    "staged_path": str(dest),
-                    "original_path": str(source),
-                    "action": "unsorted",
-                    "destination": "",
-                    "reason": cls.reason,
-                    "confidence": cls.confidence,
-                    "method": cls.method,
-                })
+                proposals.append(
+                    {
+                        "filename": cls.filename,
+                        "staged_path": str(dest),
+                        "original_path": str(source),
+                        "action": "unsorted",
+                        "destination": "",
+                        "reason": cls.reason,
+                        "confidence": cls.confidence,
+                        "method": cls.method,
+                    }
+                )
                 record_move(
                     JournalEntry(
                         timestamp=scan_id,

@@ -3,20 +3,20 @@
 from unittest.mock import MagicMock
 
 from tidydownloads.classifier import (
-    Classification,
     OllamaBackend,
     ParallelOllamaBackend,
     RulesOnlyBackend,
-    _validate_destination,
     classify_files,
     classify_tier1,
 )
+from tidydownloads.helpers import validate_destination
 from tidydownloads.scanner import FileInfo, scan_downloads
 from tidydownloads.taxonomy import FolderInfo, Taxonomy
 
 
 def _make_file(name, ext=None, size=100, mime="application/octet-stream"):
     from pathlib import Path
+
     ext = ext or ("." + name.rsplit(".", 1)[-1] if "." in name else "")
     return FileInfo(
         name=name,
@@ -29,6 +29,7 @@ def _make_file(name, ext=None, size=100, mime="application/octet-stream"):
 
 
 # --- Tier 1 tests ---
+
 
 def test_tier1_dmg():
     result = classify_tier1(_make_file("installer.dmg", ".dmg"))
@@ -62,6 +63,7 @@ def test_tier1_torrent():
 
 # --- Tier 2 / Ollama backend tests ---
 
+
 def test_ollama_backend_parses_response():
     mock_client = MagicMock()
     mock_client.generate.return_value = {
@@ -81,6 +83,7 @@ def test_ollama_backend_parses_response():
     taxonomy = Taxonomy()
 
     from tidydownloads.config import Config
+
     config = Config()
 
     results = backend.classify(files, taxonomy, config)
@@ -99,6 +102,7 @@ def test_ollama_backend_handles_missing_files():
     taxonomy = Taxonomy()
 
     from tidydownloads.config import Config
+
     config = Config()
 
     results = backend.classify(files, taxonomy, config)
@@ -108,19 +112,39 @@ def test_ollama_backend_handles_missing_files():
 
 # --- Confidence filter tests ---
 
+
 def test_confidence_filter(sample_downloads):
     """Test confidence threshold at 0.45 (new default)."""
     mock_client = MagicMock()
     mock_client.generate.return_value = {
         "files": [
-            {"file": "tax-return-2025.pdf", "action": "move",
-             "destination": "02 Finance", "reason": "tax doc", "confidence": 0.9},
-            {"file": "screenshot.png", "action": "delete",
-             "reason": "screenshot", "confidence": 0.3},
-            {"file": "notes.txt", "action": "move",
-             "destination": "03 Work", "reason": "notes", "confidence": 0.5},
-            {"file": "report.docx", "action": "move",
-             "destination": "03 Work/Reports", "reason": "report", "confidence": 0.8},
+            {
+                "file": "tax-return-2025.pdf",
+                "action": "move",
+                "destination": "02 Finance",
+                "reason": "tax doc",
+                "confidence": 0.9,
+            },
+            {
+                "file": "screenshot.png",
+                "action": "delete",
+                "reason": "screenshot",
+                "confidence": 0.3,
+            },
+            {
+                "file": "notes.txt",
+                "action": "move",
+                "destination": "03 Work",
+                "reason": "notes",
+                "confidence": 0.5,
+            },
+            {
+                "file": "report.docx",
+                "action": "move",
+                "destination": "03 Work/Reports",
+                "reason": "report",
+                "confidence": 0.8,
+            },
         ]
     }
 
@@ -151,6 +175,7 @@ def test_confidence_filter(sample_downloads):
 
 # --- Destination validation tests ---
 
+
 def test_validate_destination_exact_match():
     taxonomy = Taxonomy(
         folders=[
@@ -158,36 +183,31 @@ def test_validate_destination_exact_match():
             FolderInfo("03 Work", subfolders=["Reports"]),
         ]
     )
-    assert _validate_destination("02 Finance/Investments", taxonomy) == "02 Finance/Investments"
+    assert validate_destination("02 Finance/Investments", taxonomy) == "02 Finance/Investments"
 
 
 def test_validate_destination_case_insensitive():
-    taxonomy = Taxonomy(
-        folders=[FolderInfo("02 Finance", subfolders=["Investments"])]
-    )
-    assert _validate_destination("02 finance/investments", taxonomy) == "02 Finance/Investments"
+    taxonomy = Taxonomy(folders=[FolderInfo("02 Finance", subfolders=["Investments"])])
+    assert validate_destination("02 finance/investments", taxonomy) == "02 Finance/Investments"
 
 
 def test_validate_destination_stripped_prefix():
-    taxonomy = Taxonomy(
-        folders=[FolderInfo("04 Education", subfolders=["MBA"])]
-    )
-    assert _validate_destination("Education/MBA", taxonomy) == "04 Education/MBA"
+    taxonomy = Taxonomy(folders=[FolderInfo("04 Education", subfolders=["MBA"])])
+    assert validate_destination("Education/MBA", taxonomy) == "04 Education/MBA"
 
 
 def test_validate_destination_top_folder_only():
-    taxonomy = Taxonomy(
-        folders=[FolderInfo("01 Personal ID & Documents")]
-    )
-    assert _validate_destination("Personal ID & Documents", taxonomy) == "01 Personal ID & Documents"
+    taxonomy = Taxonomy(folders=[FolderInfo("01 Personal ID & Documents")])
+    assert validate_destination("Personal ID & Documents", taxonomy) == "01 Personal ID & Documents"
 
 
 def test_validate_destination_no_match():
     taxonomy = Taxonomy(folders=[FolderInfo("02 Finance")])
-    assert _validate_destination("Nonexistent", taxonomy) == "Nonexistent"
+    assert validate_destination("Nonexistent", taxonomy) == "Nonexistent"
 
 
 # --- Rules-only backend ---
+
 
 def test_rules_only_backend():
     backend = RulesOnlyBackend()
@@ -197,6 +217,7 @@ def test_rules_only_backend():
     ]
 
     from tidydownloads.config import Config
+
     config = Config()
 
     results = backend.classify(files, Taxonomy(), config)
@@ -206,6 +227,7 @@ def test_rules_only_backend():
 
 
 # --- Adversarial inputs ---
+
 
 def test_adversarial_filename_with_dots():
     """File with dots in name should still classify by extension."""
@@ -221,15 +243,26 @@ def test_empty_extension():
 
 # --- Parallel backend tests ---
 
+
 def test_parallel_backend_classifies_files():
     """ParallelOllamaBackend splits files into mini-batches and classifies them."""
     mock_client = MagicMock()
     mock_client.generate.return_value = {
         "files": [
-            {"file": "report.pdf", "action": "move",
-             "destination": "03 Work/Reports", "reason": "report", "confidence": 0.85},
-            {"file": "notes.txt", "action": "move",
-             "destination": "03 Work", "reason": "notes", "confidence": 0.7},
+            {
+                "file": "report.pdf",
+                "action": "move",
+                "destination": "03 Work/Reports",
+                "reason": "report",
+                "confidence": 0.85,
+            },
+            {
+                "file": "notes.txt",
+                "action": "move",
+                "destination": "03 Work",
+                "reason": "notes",
+                "confidence": 0.7,
+            },
         ]
     }
 
@@ -238,6 +271,7 @@ def test_parallel_backend_classifies_files():
     taxonomy = Taxonomy()
 
     from tidydownloads.config import Config
+
     config = Config()
 
     results = backend.classify(files, taxonomy, config)
@@ -256,10 +290,15 @@ def test_parallel_backend_multiple_batches():
         files_result = []
         for name in ["a.pdf", "b.pdf", "c.pdf", "d.pdf", "e.pdf"]:
             if name in prompt:
-                files_result.append({
-                    "file": name, "action": "move",
-                    "destination": "03 Work", "reason": "work file", "confidence": 0.8,
-                })
+                files_result.append(
+                    {
+                        "file": name,
+                        "action": "move",
+                        "destination": "03 Work",
+                        "reason": "work file",
+                        "confidence": 0.8,
+                    }
+                )
         return {"files": files_result}
 
     mock_client = MagicMock()
@@ -270,6 +309,7 @@ def test_parallel_backend_multiple_batches():
     taxonomy = Taxonomy()
 
     from tidydownloads.config import Config
+
     config = Config()
 
     results = backend.classify(files, taxonomy, config)
@@ -289,10 +329,15 @@ def test_parallel_backend_handles_batch_error():
         files_result = []
         for name in ["a.pdf", "b.pdf", "c.pdf", "d.pdf"]:
             if name in prompt:
-                files_result.append({
-                    "file": name, "action": "move",
-                    "destination": "03 Work", "reason": "work", "confidence": 0.8,
-                })
+                files_result.append(
+                    {
+                        "file": name,
+                        "action": "move",
+                        "destination": "03 Work",
+                        "reason": "work",
+                        "confidence": 0.8,
+                    }
+                )
         return {"files": files_result}
 
     mock_client = MagicMock()
@@ -303,6 +348,7 @@ def test_parallel_backend_handles_batch_error():
     taxonomy = Taxonomy()
 
     from tidydownloads.config import Config
+
     config = Config()
 
     results = backend.classify(files, taxonomy, config)
@@ -319,8 +365,13 @@ def test_parallel_backend_passes_options_to_generate():
     mock_client = MagicMock()
     mock_client.generate.return_value = {
         "files": [
-            {"file": "doc.pdf", "action": "move",
-             "destination": "03 Work", "reason": "work", "confidence": 0.9},
+            {
+                "file": "doc.pdf",
+                "action": "move",
+                "destination": "03 Work",
+                "reason": "work",
+                "confidence": 0.9,
+            },
         ]
     }
 
@@ -329,6 +380,7 @@ def test_parallel_backend_passes_options_to_generate():
     taxonomy = Taxonomy()
 
     from tidydownloads.config import Config
+
     config = Config()
 
     backend.classify(files, taxonomy, config)
@@ -346,18 +398,22 @@ def test_parallel_backend_validates_destinations():
     mock_client = MagicMock()
     mock_client.generate.return_value = {
         "files": [
-            {"file": "thesis.pdf", "action": "move",
-             "destination": "Education/MBA", "reason": "edu doc", "confidence": 0.9},
+            {
+                "file": "thesis.pdf",
+                "action": "move",
+                "destination": "Education/MBA",
+                "reason": "edu doc",
+                "confidence": 0.9,
+            },
         ]
     }
 
     backend = ParallelOllamaBackend(mock_client, mini_batch=5, workers=1)
     files = [_make_file("thesis.pdf", ".pdf")]
-    taxonomy = Taxonomy(
-        folders=[FolderInfo("04 Education", subfolders=["MBA"])]
-    )
+    taxonomy = Taxonomy(folders=[FolderInfo("04 Education", subfolders=["MBA"])])
 
     from tidydownloads.config import Config
+
     config = Config()
 
     results = backend.classify(files, taxonomy, config)

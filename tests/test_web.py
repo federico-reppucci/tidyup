@@ -38,7 +38,7 @@ def web_client(tmp_config):
 
 
 def test_index_requires_token(web_client):
-    client, token, _ = web_client
+    client, _token, _ = web_client
     resp = client.get("/")
     assert resp.status_code == 403
 
@@ -110,6 +110,7 @@ def test_accept_all(web_client):
 
 
 # --- Unsorted proposals ---
+
 
 @pytest.fixture
 def web_client_with_unsorted(tmp_config):

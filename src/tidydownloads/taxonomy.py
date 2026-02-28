@@ -6,6 +6,14 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
+__all__ = [
+    "MAX_SAMPLES",
+    "SUBFOLDER_THRESHOLD",
+    "FolderInfo",
+    "Taxonomy",
+    "discover_taxonomy",
+]
+
 log = logging.getLogger("tidydownloads")
 
 MAX_SAMPLES = 5
@@ -163,11 +171,13 @@ def discover_taxonomy(documents_dir: Path) -> Taxonomy:
         # Trim samples
         sample_files = sample_files[:MAX_SAMPLES]
 
-        folders.append(FolderInfo(
-            name=entry.name,
-            subfolders=subfolders,
-            sample_files=sample_files,
-        ))
+        folders.append(
+            FolderInfo(
+                name=entry.name,
+                subfolders=subfolders,
+                sample_files=sample_files,
+            )
+        )
 
     log.debug("Discovered taxonomy: %d top-level folders", len(folders))
     return _enrich_taxonomy(documents_dir, Taxonomy(folders=folders))

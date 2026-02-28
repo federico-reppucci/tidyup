@@ -67,7 +67,6 @@ def test_move_symlink_skipped(tmp_path):
 
 
 def test_move_rejects_path_traversal(tmp_path):
-    src = tmp_path / "..%2F..%2Fetc%2Fpasswd"
     # The validation checks the name, not the path
     # Create a file with ".." in the name
     evil = tmp_path / "source"
@@ -82,6 +81,7 @@ def test_move_rejects_path_traversal(tmp_path):
 def test_move_rejects_null_bytes(tmp_path):
     # Can't create files with null bytes on macOS, so test the validation directly
     from tidydownloads.mover import _validate_filename
+
     with pytest.raises(MoveError, match="Null byte"):
         _validate_filename("file\x00.txt")
 
