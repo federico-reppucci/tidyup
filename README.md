@@ -1,5 +1,7 @@
 # TidyDownloads
 
+[![CI](https://github.com/federico-reppucci/tidydownloads/actions/workflows/ci.yml/badge.svg)](https://github.com/federico-reppucci/tidydownloads/actions/workflows/ci.yml)
+
 Local AI-powered download organizer. Scans `~/Downloads`, classifies files using a local LLM (Ollama or Apple Intelligence), and stages them for review.
 
 ## How it works
