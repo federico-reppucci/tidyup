@@ -1,6 +1,6 @@
 """CLI integration tests."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -39,7 +39,10 @@ def test_scan_dry_run_no_files(tmp_path, capsys):
     )
     config.ensure_dirs()
 
-    with patch("tidydownloads.cli.Config.load", return_value=config):
+    with (
+        patch("tidydownloads.cli.Config.load", return_value=config),
+        patch("tidydownloads.cli._check_ollama_setup", return_value=MagicMock()),
+    ):
         result = main(["scan", "--dry-run"])
 
     assert result == 0
