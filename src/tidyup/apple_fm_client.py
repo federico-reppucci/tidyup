@@ -13,7 +13,7 @@ from typing import Any
 
 __all__ = ["AppleFMClient", "AppleFMError"]
 
-log = logging.getLogger("tidydownloads")
+log = logging.getLogger("tidyup")
 
 # Regex to strip markdown code fences: ```json ... ``` or ``` ... ```
 _CODE_FENCE_RE = re.compile(

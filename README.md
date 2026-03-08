@@ -1,19 +1,27 @@
-# TidyDownloads
+# TidyUp
 
 [![CI](https://github.com/federico-reppucci/tidydownloads/actions/workflows/ci.yml/badge.svg)](https://github.com/federico-reppucci/tidydownloads/actions/workflows/ci.yml)
 
-Local AI-powered download organizer. Scans `~/Downloads`, classifies files using a local LLM (Ollama or Apple Intelligence), and stages them for review.
+Local AI-powered file organizer. Scans any folder (defaults to `~/Downloads`), asks a local LLM to propose a clean folder structure, and moves files in-place. No cloud, no rules — the LLM decides everything.
 
 ## How it works
 
-1. **`tidydownloads scan`** — Classifies files in `~/Downloads` using rule-based heuristics + LLM
-   - Obvious files (`.dmg`, `.pkg`, `.crdownload`) are staged instantly (Tier 1 rules)
-   - Ambiguous files are sent to an LLM in parallel mini-batches, using your `~/Documents` folder structure as context
-   - Low-confidence results (below 0.45) go to `unsorted/`
-2. **`tidydownloads review`** — Opens a local web UI to accept/reject proposed moves
-3. **`tidydownloads undo`** — Reverses the last operation
-4. **`tidydownloads status`** — Shows Ollama status and last run stats
-5. **`tidydownloads benchmark`** — Compares model accuracy and speed on your real files
+1. Recursively scans the target folder
+2. Detects duplicates via SHA-256 (extras go to `Trash/`)
+3. Sends file metadata + content previews to a local LLM
+4. LLM proposes 3-10 top-level folders as JSON
+5. Files are moved in-place, with every move journaled for undo
+
+## Commands
+
+```bash
+tidyup scan              # Organize ~/Downloads
+tidyup scan ~/Desktop    # Organize a different folder
+tidyup scan --dry-run    # Preview without moving
+tidyup undo              # Reverse the last operation
+tidyup status            # Check Ollama + journal status
+tidyup benchmark         # Compare models (speed, quality, agreement)
+```
 
 ## Install
 
@@ -21,14 +29,10 @@ Local AI-powered download organizer. Scans `~/Downloads`, classifies files using
 
 ```bash
 brew tap federico-reppucci/tidydownloads https://github.com/federico-reppucci/tidydownloads.git
-brew install tidydownloads
+brew install tidyup
 ```
 
-This automatically installs Ollama, poppler, and Python. On first run, the default model is downloaded automatically:
-
-```bash
-tidydownloads scan
-```
+On first run, the default model (`gemma3:4b`) is downloaded automatically.
 
 ### From source
 
@@ -36,111 +40,85 @@ tidydownloads scan
 brew install python@3.12 ollama poppler
 git clone https://github.com/federico-reppucci/tidydownloads.git
 cd tidydownloads
-python3.12 -m venv .venv
-source .venv/bin/activate
+python3.12 -m venv venv
+source venv/bin/activate
 pip install -e .
-```
-
-### Parallel performance
-
-For faster scans on machines with 16+ GB RAM:
-
-```bash
-launchctl setenv OLLAMA_NUM_PARALLEL 4
-brew services restart ollama
 ```
 
 ## Usage
 
 ```bash
-# Scan and classify (uses parallel mini-batches by default)
-tidydownloads scan
+# Default: organize ~/Downloads with gemma3:4b
+tidyup scan
 
-# Use a specific model
-tidydownloads --model gemma3:12b scan
+# Use a different model
+tidyup --model gemma3:12b scan
 
-# Use Apple Intelligence (macOS 26+)
-tidydownloads --model apple scan
+# Use Apple Intelligence (macOS 26+, no Ollama needed)
+tidyup --model apple scan
 
-# Dry run (no files moved)
-tidydownloads scan --dry-run
-
-# Review staged files in browser
-tidydownloads review
+# Dry run
+tidyup scan --dry-run
 
 # Undo last operation
-tidydownloads undo
-
-# Check status
-tidydownloads status
+tidyup undo
 ```
 
 ### Benchmarking
 
-Compare models on a random sample of your Documents files:
+Compare models on your actual files:
 
 ```bash
-# Single model
-tidydownloads benchmark --model gemma3:4b --files 20 --seed 42
+# All default models
+tidyup benchmark
 
-# Compare multiple models
-tidydownloads benchmark --model gemma3:4b --model gemma3:12b --files 20
+# Specific folder
+tidyup benchmark ~/Desktop
 
-# Sequential mode (disable parallel mini-batches)
-tidydownloads benchmark --model gemma3:4b --files 20 --no-parallel
+# Pick models and run twice for consistency
+tidyup benchmark --models gemma3:4b qwen3:4b gemma3:12b --runs 2
 ```
 
 ### Model recommendations
 
-| Model | Speed | Accuracy | Notes |
-|---|---|---|---|
-| gemma3:4b | ~1.0 files/s | ~38% top-folder | Best speed, decent for simple taxonomies |
-| llama3.1:8b | ~0.4 files/s | ~40-45% top-folder | Good balance, only model with exact matches |
-| gemma3:12b | ~0.3 files/s | ~50-75% top-folder | Best accuracy, fewest wrong destinations |
-| qwen2.5:1.5b | ~1.0 files/s | ~29-64% top-folder | Variable accuracy, fast |
-| phi4-mini | ~0.5 files/s | ~9% top-folder | Not recommended for this task |
+Benchmarked on 14 files, M4 MacBook Pro (16 GB RAM):
 
-Benchmarked on 48GB M4 Pro with `OLLAMA_NUM_PARALLEL=4`, 20 files, parallel mode.
+| Model | Params | Type | Time | Tok/s | Folders | Notes |
+|---|---|---|---|---|---|---|
+| **gemma3:4b** | 4B | non-thinking | 18s | 30 | 6 | Default. Fast, good quality |
+| qwen3:4b | 4B | thinking | 16s | 30 | 6 | Similar speed, different grouping |
+| gemma3:12b | 12B | non-thinking | 73s | 7 | 6 | Better quality, 4x slower |
+| qwen3.5:9b | 9B | thinking | 59s | 9 | 5 | Thinking model, diminishing returns |
+| qwen3.5:27b | 27B | thinking | 189s | 3 | 6 | Too slow for 16 GB machines |
 
-## Architecture
-
-- **Tier 1**: Rule-based classification by file extension (instant, no LLM)
-- **Tier 2**: LLM classification using midsize taxonomy format with content previews
-- **Parallel mini-batches**: Files are split into batches of 5 and classified concurrently (4 workers) via `ThreadPoolExecutor` + Ollama's parallel request support
-- **Confidence filter**: Files with confidence < 0.45 go to `unsorted/`
-- **Staging folders**: `~/Downloads/to_delete/`, `to_move/`, `unsorted/`
-- **Undo log**: Every move is journaled for safe reversal
+All models returned valid JSON and covered 100% of files. Cross-model agreement was 28-50%, suggesting organization is subjective — the 4B models are the sweet spot for speed vs quality.
 
 ### Configuration
 
-Override defaults in `~/.config/tidydownloads/config.json`:
+Override defaults in `~/.config/tidyup/config.json`:
 
 ```json
 {
-  "ollama_model": "gemma3:12b",
+  "ollama_model": "gemma3:4b",
   "parallel_requests": 4,
-  "mini_batch_size": 5,
-  "confidence_threshold": 0.45,
-  "batch_size": 25
+  "mini_batch_size": 5
 }
 ```
+
+Data paths:
+- Undo log: `~/.local/share/tidyup/undo_log.jsonl`
 
 ## Development
 
 ```bash
 pip install -e ".[dev]"
 
-# Tests
 pytest tests/ -v
-pytest tests/ -v --cov=src/tidydownloads --cov-report=html
-
-# Lint & format
-ruff format --check src/ tests/
 ruff check src/ tests/
-
-# Type check
-mypy src/tidydownloads/
+mypy src/tidyup/
 ```
+
+Python 3.12+ required. No runtime dependencies (stdlib only).
 
 ## License
 

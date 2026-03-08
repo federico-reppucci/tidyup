@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tidydownloads"
+name = "tidyup"
 version = "0.1.0"
 description = "Local AI-powered download organizer using Ollama"
 readme = "README.md"
@@ -12,9 +12,7 @@ requires-python = ">=3.12"
 authors = [
     {name = "Federico Reppucci"},
 ]
-dependencies = [
-    "flask>=3.0",
-]
+dependencies = []
 
 [project.optional-dependencies]
 dev = [
@@ -25,13 +23,13 @@ dev = [
 ]
 
 [project.scripts]
-tidydownloads = "tidydownloads.cli:main"
+tidyup = "tidyup.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-tidydownloads = ["web/templates/*.html", "web/static/*.css", "web/static/*.js", "py.typed"]
+tidyup = ["py.typed"]
 
 [tool.ruff]
 target-version = "py312"

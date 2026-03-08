@@ -11,35 +11,14 @@ __all__ = ["Config"]
 
 @dataclass
 class Config:
-    downloads_dir: Path = field(default_factory=lambda: Path.home() / "Downloads")
-    documents_dir: Path = field(default_factory=lambda: Path.home() / "Documents")
-    data_dir: Path = field(
-        default_factory=lambda: Path.home() / ".local" / "share" / "tidydownloads"
-    )
+    target_dir: Path = field(default_factory=lambda: Path.home() / "Downloads")
+    data_dir: Path = field(default_factory=lambda: Path.home() / ".local" / "share" / "tidyup")
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "gemma3:4b"
     excluded: list[str] = field(default_factory=lambda: [".DS_Store", ".localized", "*.tmp"])
-    batch_size: int = 25
-    confidence_threshold: float = 0.45
+    excluded_dirs: list[str] = field(default_factory=lambda: [".Trash", ".Spotlight-V100"])
     parallel_requests: int = 4
     mini_batch_size: int = 5
-    web_port: int = 8457
-
-    @property
-    def staging_delete(self) -> Path:
-        return self.downloads_dir / "to_delete"
-
-    @property
-    def staging_move(self) -> Path:
-        return self.downloads_dir / "to_move"
-
-    @property
-    def staging_unsorted(self) -> Path:
-        return self.downloads_dir / "unsorted"
-
-    @property
-    def proposals_path(self) -> Path:
-        return self.data_dir / "proposals.json"
 
     @property
     def undo_log_path(self) -> Path:
@@ -56,7 +35,7 @@ class Config:
     @classmethod
     def load(cls) -> Config:
         config = cls()
-        config_path = Path.home() / ".config" / "tidydownloads" / "config.json"
+        config_path = Path.home() / ".config" / "tidyup" / "config.json"
         if config_path.exists():
             overrides = json.loads(config_path.read_text())
             for key, value in overrides.items():

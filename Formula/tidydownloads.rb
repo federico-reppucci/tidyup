@@ -55,7 +55,7 @@ class Tidydownloads < Formula
       First-time setup:
 
         1. Start Ollama:   brew services start ollama
-        2. Run first scan: tidydownloads scan
+        2. Run first scan: tidyup scan
 
       The first scan will automatically download the default AI model (~3.3 GB).
 
@@ -65,6 +65,6 @@ class Tidydownloads < Formula
   end
 
   test do
-    assert_match "usage", shell_output("#{bin}/tidydownloads --help")
+    assert_match "usage", shell_output("#{bin}/tidyup --help")
   end
 end

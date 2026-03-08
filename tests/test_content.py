@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from tidydownloads.content import extract_metadata, extract_preview
+from tidyup.content import extract_metadata, extract_preview
 
 
 def test_extract_text_file(tmp_path):

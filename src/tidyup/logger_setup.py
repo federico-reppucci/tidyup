@@ -8,11 +8,11 @@ from pathlib import Path
 
 def setup_logging(log_dir: Path, verbose: bool = False) -> logging.Logger:
     log_dir.mkdir(parents=True, exist_ok=True)
-    logger = logging.getLogger("tidydownloads")
+    logger = logging.getLogger("tidyup")
     logger.setLevel(logging.DEBUG)
 
     # File handler — always DEBUG
-    fh = logging.FileHandler(log_dir / "tidydownloads.log")
+    fh = logging.FileHandler(log_dir / "tidyup.log")
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     logger.addHandler(fh)

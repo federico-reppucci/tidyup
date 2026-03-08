@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 __all__ = [
@@ -17,12 +19,13 @@ __all__ = [
     "PER_FILE_TIMEOUT",
     "SPINNER",
     "STARTUP_TIMEOUT",
+    "GenerateResult",
     "OllamaClient",
     "OllamaError",
     "make_token_callback",
 ]
 
-log = logging.getLogger("tidydownloads")
+log = logging.getLogger("tidyup")
 
 GENERATE_TIMEOUT = 300  # seconds (larger models need more time)
 PER_FILE_TIMEOUT = 20  # seconds per file in a batch
@@ -39,6 +42,15 @@ def make_token_callback(prefix: str) -> Callable[[int], None]:
         print(f"\r  {prefix} {frame} {n} tokens", end="", flush=True)
 
     return on_token
+
+
+@dataclass
+class GenerateResult:
+    """Result from OllamaClient.generate() with timing and token metadata."""
+
+    data: dict[str, Any]
+    token_count: int
+    elapsed: float  # wall-clock seconds
 
 
 class OllamaError(Exception):
@@ -87,7 +99,7 @@ class OllamaClient:
                 "Ollama is not installed.\n\n"
                 "  Install:  brew install ollama\n"
                 "  Start:    brew services start ollama\n"
-                "  Then run: tidydownloads scan"
+                "  Then run: tidyup scan"
             ) from e
 
         deadline = time.monotonic() + STARTUP_TIMEOUT
@@ -152,8 +164,8 @@ class OllamaClient:
         on_token: Callable[[int], None] | None = None,
         options: dict[str, Any] | None = None,
         keep_alive: str | None = None,
-    ) -> dict[str, Any]:
-        """Send a prompt to Ollama and return parsed JSON response.
+    ) -> GenerateResult:
+        """Send a prompt to Ollama and return parsed JSON response with timing metadata.
 
         Uses streaming to provide live progress via *on_token* and to
         enforce a socket-level *timeout* (applied per-chunk, so stalls
@@ -185,10 +197,12 @@ class OllamaClient:
             method="POST",
         )
 
+        t0 = time.monotonic()
         try:
             response_text = ""
+            thinking_text = ""
             token_count = 0
-            deadline = time.monotonic() + timeout
+            deadline = t0 + timeout
 
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 for line in resp:
@@ -208,10 +222,31 @@ class OllamaClient:
                         if on_token is not None:
                             on_token(token_count)
 
+                    # Thinking models (e.g. Qwen3.5) with format:"json"
+                    # emit the JSON answer via the "thinking" field instead
+                    # of "response".  Accumulate it as a fallback.
+                    thinking = chunk.get("thinking", "")
+                    if thinking:
+                        thinking_text += thinking
+                        token_count += 1
+                        if on_token is not None:
+                            on_token(token_count)
+
                     if chunk.get("done"):
                         break
 
-            return json.loads(response_text)  # type: ignore[no-any-return]
+            elapsed = time.monotonic() - t0
+
+            # Strip <think>...</think> blocks from reasoning models (e.g. Qwen3)
+            cleaned = re.sub(r"<think>.*?</think>", "", response_text, flags=re.DOTALL).strip()
+
+            # Thinking models with format:"json" put the JSON answer in the
+            # "thinking" field while "response" stays empty.
+            if not cleaned and thinking_text:
+                cleaned = thinking_text.strip()
+
+            data = json.loads(cleaned)
+            return GenerateResult(data=data, token_count=token_count, elapsed=elapsed)
         except urllib.error.URLError as e:
             raise OllamaError(f"Failed to connect to Ollama: {e}") from e
         except ConnectionError as e:

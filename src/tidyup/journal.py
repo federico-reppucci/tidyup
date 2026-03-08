@@ -17,13 +17,13 @@ __all__ = [
     "undo_last",
 ]
 
-log = logging.getLogger("tidydownloads")
+log = logging.getLogger("tidyup")
 
 
 @dataclass
 class JournalEntry:
     timestamp: str
-    operation: str  # "scan_stage" | "review_accept" | "review_reject"
+    operation: str  # "organize"
     source: str  # original location
     destination: str  # where it was moved to
     scan_id: str
@@ -61,25 +61,20 @@ def get_entries(log_path: Path) -> list[JournalEntry]:
     return entries
 
 
-def get_last_operation(log_path: Path, operation_filter: str | None = None) -> list[JournalEntry]:
-    """Get entries from the most recent batch (same scan_id), optionally filtered."""
+def get_last_operation(log_path: Path) -> list[JournalEntry]:
+    """Get entries from the most recent batch (same scan_id)."""
     entries = get_entries(log_path)
     active = [e for e in entries if not e.undone]
     if not active:
         return []
 
-    if operation_filter:
-        active = [e for e in active if e.operation.startswith(operation_filter)]
-        if not active:
-            return []
-
     last_scan_id = active[-1].scan_id
     return [e for e in active if e.scan_id == last_scan_id]
 
 
-def undo_last(log_path: Path, operation_filter: str | None = None) -> UndoResult:
+def undo_last(log_path: Path) -> UndoResult:
     """Reverse the most recent batch of moves."""
-    batch = get_last_operation(log_path, operation_filter)
+    batch = get_last_operation(log_path)
     if not batch:
         return UndoResult(reversed_count=0, failed=[], scan_id="")
 
@@ -102,7 +97,7 @@ def undo_last(log_path: Path, operation_filter: str | None = None) -> UndoResult
             shutil.move(str(src), str(dst))
             reversed_count += 1
         except OSError as e:
-            log.error("Failed to undo move %s → %s: %s", src, dst, e)
+            log.error("Failed to undo move %s -> %s: %s", src, dst, e)
             failed.append(entry.destination)
 
     # Mark entries as undone

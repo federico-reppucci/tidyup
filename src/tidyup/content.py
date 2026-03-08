@@ -15,7 +15,7 @@ __all__ = [
     "extract_preview",
 ]
 
-log = logging.getLogger("tidydownloads")
+log = logging.getLogger("tidyup")
 
 TIMEOUT = 5  # seconds for subprocess calls
 MAX_CHARS = 500
