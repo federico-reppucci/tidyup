@@ -4,18 +4,21 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from tidyup.apple_fm_client import AppleFMError
 from tidyup.helpers import (
+    NOT_CLASSIFIED_REASON,
     Proposal,
     build_file_descriptions,
+    current_parent,
     parse_organize_response,
     precompute_previews,
     sha256_file,
 )
 from tidyup.ollama_client import OllamaClient, OllamaError, make_token_callback
-from tidyup.prompts import build_organize_prompt
+from tidyup.prompts import build_organize_prompt, build_retry_prompt
 from tidyup.scanner import FileInfo
 
 __all__ = [
@@ -85,48 +88,89 @@ class OllamaOrganizer:
     def __init__(self, client: OllamaClient):
         self.client = client
 
+    def _call_llm(
+        self,
+        files: list[FileInfo],
+        previews: dict[str, str],
+        prompt_builder: Callable[[list[str]], str],
+        label: str = "Organizing...",
+    ) -> list[Proposal]:
+        """Make a single LLM call and parse the response."""
+        file_descriptions = build_file_descriptions(files, previews)
+        prompt = prompt_builder(file_descriptions)
+
+        num_predict = len(files) * 60 + 200
+        num_ctx = max(4096, len(prompt) // 4 + num_predict + 512)
+        timeout = max(60, len(files) * 20)
+
+        on_token = make_token_callback(label)
+        result = self.client.generate(
+            prompt,
+            timeout=timeout,
+            on_token=on_token,
+            options={"num_predict": num_predict, "num_ctx": num_ctx},
+            keep_alive="10m",
+        )
+        print(f"\r  {label} done ({len(files)} files)")
+        return parse_organize_response(result.data, files)
+
     def organize(self, files: list[FileInfo]) -> list[Proposal]:
         if not files:
             return []
 
         previews = precompute_previews(files)
-        file_descriptions = build_file_descriptions(files, previews)
-        prompt = build_organize_prompt(file_descriptions)
-
-        num_predict = len(files) * 60 + 200
-        # Estimate prompt tokens (~4 chars/token) + output tokens + headroom
-        num_ctx = max(4096, len(prompt) // 4 + num_predict + 512)
-        timeout = max(60, len(files) * 20)
-
-        on_token = make_token_callback("Organizing...")
 
         try:
-            result = self.client.generate(
-                prompt,
-                timeout=timeout,
-                on_token=on_token,
-                options={"num_predict": num_predict, "num_ctx": num_ctx},
-                keep_alive="10m",
-            )
-            print(f"\r  Organizing... done ({len(files)} files)")
-            return parse_organize_response(result.data, files)
+            proposals = self._call_llm(files, previews, build_organize_prompt)
         except _LLM_ERRORS as e:
             print(f"\r  Organizing... ERROR: {e}")
             log.error("LLM error: %s", e)
-            # On error, all files stay in place
             return [
                 Proposal(
                     relative_path=f.relative_path,
-                    destination_folder=str(
-                        f.path.parent.relative_to(f.path.parent)
-                        if f.path.parent == f.path.parent
-                        else ""
-                    ),
+                    destination_folder=current_parent(f.relative_path),
                     reason=f"LLM error: {e}",
                     needs_move=False,
                 )
                 for f in files
             ]
+
+        # Retry once for files the LLM missed
+        proposals = self._retry_unclassified(files, previews, proposals)
+        return proposals
+
+    def _retry_unclassified(
+        self,
+        files: list[FileInfo],
+        previews: dict[str, str],
+        proposals: list[Proposal],
+    ) -> list[Proposal]:
+        """If any files were not classified, retry once with a focused prompt."""
+        unclassified = [p for p in proposals if p.reason == NOT_CLASSIFIED_REASON]
+        if not unclassified:
+            return proposals
+
+        unclassified_paths = {p.relative_path for p in unclassified}
+        retry_files = [f for f in files if f.relative_path in unclassified_paths]
+        log.info("Retrying %d unclassified files", len(retry_files))
+
+        try:
+            retry_proposals = self._call_llm(
+                retry_files, previews, build_retry_prompt, label="Retrying missed files..."
+            )
+        except _LLM_ERRORS as e:
+            log.warning("Retry LLM call failed: %s", e)
+            return proposals
+
+        # Merge: replace unclassified proposals with retry results
+        retry_map = {p.relative_path: p for p in retry_proposals}
+        merged = []
+        for p in proposals:
+            if p.relative_path in retry_map and p.reason == NOT_CLASSIFIED_REASON:
+                merged.append(retry_map[p.relative_path])
+            else:
+                merged.append(p)
+        return merged
 
 
 class ParallelOllamaOrganizer:
@@ -191,17 +235,8 @@ class ParallelOllamaOrganizer:
         total: int,
     ) -> list[Proposal]:
         """Organize one batch (runs in thread)."""
-        file_descriptions = build_file_descriptions(batch, previews)
-        prompt = build_organize_prompt(file_descriptions)
-
-        num_predict = len(batch) * 60 + 200
-        num_ctx = max(4096, len(prompt) // 4 + num_predict + 512)
-        timeout = max(60, len(batch) * 20)
-
-        result = self.client.generate(
-            prompt,
-            timeout=timeout,
-            options={"num_predict": num_predict, "num_ctx": num_ctx},
-            keep_alive="10m",
-        )
-        return parse_organize_response(result.data, batch)
+        # Use a temporary OllamaOrganizer to get retry logic for free
+        single = OllamaOrganizer(self.client)
+        proposals = single._call_llm(batch, previews, build_organize_prompt)
+        proposals = single._retry_unclassified(batch, previews, proposals)
+        return proposals

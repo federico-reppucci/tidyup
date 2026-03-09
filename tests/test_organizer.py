@@ -4,8 +4,8 @@ import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from tidyup.helpers import parse_organize_response
-from tidyup.ollama_client import GenerateResult
+from tidyup.helpers import NOT_CLASSIFIED_REASON, parse_organize_response
+from tidyup.ollama_client import GenerateResult, OllamaError
 from tidyup.organizer import OllamaOrganizer, ParallelOllamaOrganizer, detect_duplicates
 from tidyup.scanner import FileInfo
 
@@ -92,7 +92,7 @@ def test_parse_response_missing_files():
     assert len(results) == 2
     by_path = {r.relative_path: r for r in results}
     assert by_path["b.pdf"].needs_move is False
-    assert "Not classified" in by_path["b.pdf"].reason
+    assert by_path["b.pdf"].reason == NOT_CLASSIFIED_REASON
 
 
 def test_parse_response_empty():
@@ -248,6 +248,7 @@ def test_organizer_handles_empty_files():
 
 def test_organizer_handles_missing_files_in_response():
     mock_client = MagicMock()
+    # Both initial and retry return empty -> file stays unclassified
     mock_client.generate.return_value = _gen_result({"files": []})
 
     org = OllamaOrganizer(mock_client)
@@ -256,6 +257,9 @@ def test_organizer_handles_missing_files_in_response():
 
     assert len(results) == 1
     assert results[0].needs_move is False
+    assert results[0].reason == NOT_CLASSIFIED_REASON
+    # Should have been called twice: initial + retry
+    assert mock_client.generate.call_count == 2
 
 
 # --- ParallelOllamaOrganizer tests ---
@@ -305,3 +309,107 @@ def test_parallel_organizer_handles_batch_error():
 
     # All 100 files should have results (some from successful batches, some from error)
     assert len(results) == 100
+
+
+# --- Retry logic tests ---
+
+
+def test_organizer_retries_unclassified_files():
+    """LLM misses a file on first call, classifies it on retry."""
+    call_count = 0
+
+    def fake_generate(prompt, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # First call: only classify a.pdf, miss b.pdf
+            return _gen_result(
+                {"files": [{"file": "a.pdf", "folder": "Work", "reason": "work"}]}
+            )
+        else:
+            # Retry: classify b.pdf
+            return _gen_result(
+                {"files": [{"file": "b.pdf", "folder": "Media", "reason": "image"}]}
+            )
+
+    mock_client = MagicMock()
+    mock_client.generate.side_effect = fake_generate
+
+    org = OllamaOrganizer(mock_client)
+    files = [_make_file("a.pdf"), _make_file("b.pdf")]
+    results = org.organize(files)
+
+    assert len(results) == 2
+    by_path = {r.relative_path: r for r in results}
+    assert by_path["a.pdf"].destination_folder == "Work"
+    assert by_path["b.pdf"].destination_folder == "Media"
+    assert by_path["b.pdf"].reason != NOT_CLASSIFIED_REASON
+    assert call_count == 2
+
+
+def test_organizer_no_retry_when_all_classified():
+    """No retry when all files are classified on first call."""
+    mock_client = MagicMock()
+    mock_client.generate.return_value = _gen_result(
+        {
+            "files": [
+                {"file": "a.pdf", "folder": "Work", "reason": "work"},
+                {"file": "b.pdf", "folder": "Media", "reason": "image"},
+            ]
+        }
+    )
+
+    org = OllamaOrganizer(mock_client)
+    files = [_make_file("a.pdf"), _make_file("b.pdf")]
+    results = org.organize(files)
+
+    assert len(results) == 2
+    # Only 1 LLM call — no retry needed
+    assert mock_client.generate.call_count == 1
+
+
+def test_organizer_retry_still_unclassified():
+    """Both initial and retry miss the file -> stays unclassified."""
+    mock_client = MagicMock()
+    mock_client.generate.return_value = _gen_result(
+        {"files": [{"file": "a.pdf", "folder": "Work", "reason": "work"}]}
+    )
+
+    org = OllamaOrganizer(mock_client)
+    files = [_make_file("a.pdf"), _make_file("b.pdf")]
+    results = org.organize(files)
+
+    assert len(results) == 2
+    by_path = {r.relative_path: r for r in results}
+    assert by_path["b.pdf"].reason == NOT_CLASSIFIED_REASON
+    assert by_path["b.pdf"].needs_move is False
+    assert mock_client.generate.call_count == 2
+
+
+def test_organizer_retry_error_preserves_unclassified():
+    """Retry LLM call fails -> original unclassified proposals preserved, no crash."""
+    call_count = 0
+
+    def fake_generate(prompt, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return _gen_result(
+                {"files": [{"file": "a.pdf", "folder": "Work", "reason": "work"}]}
+            )
+        else:
+            raise OllamaError("connection timeout")
+
+    mock_client = MagicMock()
+    mock_client.generate.side_effect = fake_generate
+
+    org = OllamaOrganizer(mock_client)
+    files = [_make_file("a.pdf"), _make_file("b.pdf")]
+    results = org.organize(files)
+
+    assert len(results) == 2
+    by_path = {r.relative_path: r for r in results}
+    assert by_path["a.pdf"].destination_folder == "Work"
+    assert by_path["b.pdf"].reason == NOT_CLASSIFIED_REASON
+    assert by_path["b.pdf"].needs_move is False
+    assert call_count == 2

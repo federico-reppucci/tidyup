@@ -11,10 +11,14 @@ from pathlib import Path, PurePosixPath
 from tidyup.content import extract_preview
 from tidyup.scanner import FileInfo
 
+NOT_CLASSIFIED_REASON = "Not classified by LLM"
+
 __all__ = [
+    "NOT_CLASSIFIED_REASON",
     "PREVIEW_CHARS",
     "Proposal",
     "build_file_descriptions",
+    "current_parent",
     "parse_organize_response",
     "precompute_previews",
     "sha256_file",
@@ -78,7 +82,7 @@ def precompute_previews(files: list[FileInfo], max_workers: int = 4) -> dict[str
     return previews
 
 
-def _current_parent(relative_path: str) -> str:
+def current_parent(relative_path: str) -> str:
     """Get the parent folder of a relative path, or '' for root files."""
     parent = str(PurePosixPath(relative_path).parent)
     return "" if parent == "." else parent
@@ -103,7 +107,7 @@ def parse_organize_response(
         return [
             Proposal(
                 relative_path=f.relative_path,
-                destination_folder=_current_parent(f.relative_path),
+                destination_folder=current_parent(f.relative_path),
                 reason="LLM returned invalid format",
                 needs_move=False,
             )
@@ -123,7 +127,7 @@ def parse_organize_response(
         folder = folder.strip().rstrip("/")
 
         reason = item.get("reason", "")
-        current = _current_parent(file_path)
+        current = current_parent(file_path)
         needs_move = current != folder
 
         results.append(
@@ -141,8 +145,8 @@ def parse_organize_response(
             results.append(
                 Proposal(
                     relative_path=f.relative_path,
-                    destination_folder=_current_parent(f.relative_path),
-                    reason="Not classified by LLM",
+                    destination_folder=current_parent(f.relative_path),
+                    reason=NOT_CLASSIFIED_REASON,
                     needs_move=False,
                 )
             )

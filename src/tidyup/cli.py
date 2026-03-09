@@ -45,6 +45,10 @@ def main(argv: list[str] | None = None) -> int:
     # status
     sub.add_parser("status", help="Check Ollama status and show last run stats")
 
+    # install / uninstall
+    sub.add_parser("install", help="Install Finder Quick Action (right-click → TidyUp)")
+    sub.add_parser("uninstall", help="Remove Finder Quick Action")
+
     # benchmark
     bench_p = sub.add_parser("benchmark", help="Compare LLM models on file organization")
     bench_p.add_argument(
@@ -88,6 +92,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_undo(config)
     elif args.command == "status":
         return cmd_status(config)
+    elif args.command == "install":
+        return cmd_install()
+    elif args.command == "uninstall":
+        return cmd_uninstall()
     elif args.command == "benchmark":
         return cmd_benchmark(config, models=args.models, runs=args.runs)
 
@@ -142,8 +150,33 @@ def _check_ollama_setup(config: Config, dry_run: bool = False):
     return client
 
 
+def cmd_install() -> int:
+    from tidyup.install import install_quick_action
+
+    try:
+        path = install_quick_action()
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        return 1
+
+    print(f"Installed Finder Quick Action at:\n  {path}\n")
+    print("Usage: right-click any folder in Finder → Quick Actions → TidyUp")
+    return 0
+
+
+def cmd_uninstall() -> int:
+    from tidyup.install import uninstall_quick_action
+
+    if uninstall_quick_action():
+        print("Removed TidyUp Finder Quick Action.")
+    else:
+        print("Quick Action not found (nothing to remove).")
+    return 0
+
+
 def cmd_scan(config: Config, dry_run: bool = False) -> int:
     from tidyup.apple_fm_client import AppleFMClient
+    from tidyup.helpers import NOT_CLASSIFIED_REASON
     from tidyup.mover import cleanup_empty_dirs, execute_moves
     from tidyup.organizer import OllamaOrganizer, ParallelOllamaOrganizer, detect_duplicates
     from tidyup.scanner import scan_downloads
@@ -218,12 +251,25 @@ def cmd_scan(config: Config, dry_run: bool = False) -> int:
         if cleaned:
             print(f"  Cleaned up {cleaned} empty folders.")
 
-    # Summary
-    print(f"\nDone! Moved: {result['moved']}, Skipped: {result['skipped']}", end="")
+    # Warn about unclassified files
+    unclassified = [p for p in all_proposals if p.reason == NOT_CLASSIFIED_REASON]
+    if unclassified:
+        print(f"\nWarning: {len(unclassified)} file(s) were not classified by the LLM:")
+        for p in unclassified[:10]:
+            print(f"  - {p.relative_path}")
+        if len(unclassified) > 10:
+            print(f"  ... and {len(unclassified) - 10} more")
+
+    # Summary — split "Already correct" vs "Unclassified"
+    already_correct = int(result["skipped"]) - len(unclassified)
+    parts = [f"Moved: {result['moved']}"]
+    if already_correct > 0:
+        parts.append(f"Already correct: {already_correct}")
+    if unclassified:
+        parts.append(f"Unclassified: {len(unclassified)}")
     if result["failed"]:
-        print(f", Failed: {result['failed']}")
-    else:
-        print()
+        parts.append(f"Failed: {result['failed']}")
+    print(f"\nDone! {', '.join(parts)}")
 
     if not dry_run and result["moved"]:
         print("\nTo undo: tidyup undo")
