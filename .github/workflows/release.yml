@@ -52,6 +52,10 @@ jobs:
           echo "Updated formula to ${TAG}:"
           grep -E 'url|sha256' Formula/tidyup.rb
 
+      - name: Fix .git ownership after PSR Docker container
+        if: steps.release.outputs.released == 'true'
+        run: sudo chown -R "$(id -u):$(id -g)" .git
+
       - name: Commit and push formula update
         if: steps.release.outputs.released == 'true'
         env:
