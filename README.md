@@ -6,11 +6,22 @@ Local AI-powered file organizer. Scans any folder (defaults to `~/Downloads`), a
 
 ## How it works
 
+```
+  [1/5] Scanning.............. 523 files found (0s)
+  [2/5] Deduplicating......... 12 duplicates -> Trash/ (1s)
+  [3/5] Extracting previews... 340 files (3s)
+  [4/5] Organizing via LLM... ⠹ batch 5/13 · 4 active · 312 tokens (42s)
+  [5/5] Moving files.......... 418 moved (0s)
+```
+
 1. Recursively scans the target folder
 2. Detects duplicates via SHA-256 (extras go to `Trash/`)
-3. Sends file metadata + content previews to a local LLM
-4. LLM proposes 3-10 top-level folders as JSON
-5. Files are moved in-place, with every move journaled for undo
+3. Extracts content previews (text, PDF, metadata)
+4. Sends file metadata + previews to a local LLM (parallel batches for 80+ files)
+5. LLM proposes 3-10 top-level folders as JSON
+6. Files are moved in-place, with every move journaled for undo
+
+Live progress is shown for every phase, with elapsed time and token counts.
 
 ## Commands
 
@@ -20,7 +31,8 @@ tidyup scan ~/Desktop    # Organize a different folder
 tidyup scan --dry-run    # Preview without moving
 tidyup undo              # Reverse the last operation
 tidyup status            # Check Ollama + journal status
-tidyup benchmark         # Compare models (speed, quality, agreement)
+tidyup install           # Add "TidyUp" to Finder's right-click menu
+tidyup uninstall         # Remove the Finder integration
 ```
 
 ## Install
@@ -37,12 +49,13 @@ On first run, the default model (`gemma3:4b`) is downloaded automatically.
 ### From source
 
 ```bash
-brew install python@3.12 ollama poppler
+brew install python@3.12 ollama poppler  # poppler is optional (PDF text extraction)
 git clone https://github.com/federico-reppucci/tidydownloads.git
 cd tidydownloads
 python3.12 -m venv venv
 source venv/bin/activate
 pip install -e .
+brew services start ollama
 ```
 
 ## Usage
@@ -64,34 +77,32 @@ tidyup scan --dry-run
 tidyup undo
 ```
 
-### Benchmarking
+### Stress testing
 
-Compare models on your actual files:
+Generate a synthetic 500-file test folder and scan against it:
 
 ```bash
-# All default models
-tidyup benchmark
+# Full run: generate 500 files + scan + cleanup
+python3 scripts/stress_benchmark.py
 
-# Specific folder
-tidyup benchmark ~/Desktop
+# Generate only, inspect the files
+python3 scripts/stress_benchmark.py --generate-only --keep
 
-# Pick models and run twice for consistency
-tidyup benchmark --models gemma3:4b qwen3:4b gemma3:12b --runs 2
+# Re-run against existing data
+python3 scripts/stress_benchmark.py --dir stress_test_data/ --model gemma3:4b
 ```
 
-### Model recommendations
+### Finder integration
 
-Benchmarked on 14 files, M4 MacBook Pro (16 GB RAM):
+Organize folders directly from Finder's right-click menu:
 
-| Model | Params | Type | Time | Tok/s | Folders | Notes |
-|---|---|---|---|---|---|---|
-| **gemma3:4b** | 4B | non-thinking | 18s | 30 | 6 | Default. Fast, good quality |
-| qwen3:4b | 4B | thinking | 16s | 30 | 6 | Similar speed, different grouping |
-| gemma3:12b | 12B | non-thinking | 73s | 7 | 6 | Better quality, 4x slower |
-| qwen3.5:9b | 9B | thinking | 59s | 9 | 5 | Thinking model, diminishing returns |
-| qwen3.5:27b | 27B | thinking | 189s | 3 | 6 | Too slow for 16 GB machines |
+```bash
+tidyup install
+```
 
-All models returned valid JSON and covered 100% of files. Cross-model agreement was 28-50%, suggesting organization is subjective — the 4B models are the sweet spot for speed vs quality.
+This creates a macOS Quick Action. After installing, right-click any folder in Finder → **Services** → **TidyUp**. A Terminal window opens and runs `tidyup scan` on that folder.
+
+To remove it: `tidyup uninstall`.
 
 ### Configuration
 

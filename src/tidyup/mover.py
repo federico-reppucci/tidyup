@@ -9,7 +9,7 @@ import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
-from tidyup.helpers import Proposal, sha256_file
+from tidyup.helpers import Proposal
 from tidyup.journal import JournalEntry, record_move
 
 __all__ = ["MoveError", "cleanup_empty_dirs", "execute_moves", "move_file_safely"]
@@ -50,19 +50,7 @@ def move_file_safely(source: Path, dest_dir: Path) -> Path | None:
     dest = dest_dir / source.name
 
     if dest.exists():
-        # Directory bundles (e.g. .app) -- can't hash, just remove source
-        if source.is_dir():
-            log.info("Directory already staged, removing source: %s", source.name)
-            shutil.rmtree(source)
-            return dest
-
-        # Same content -> duplicate, remove source
-        if sha256_file(source) == sha256_file(dest):
-            log.info("Duplicate detected, removing source: %s", source.name)
-            source.unlink()
-            return dest
-
-        # Different content -> add numeric suffix
+        # Collision: always rename with numeric suffix — never delete files
         stem = source.stem
         suffix = source.suffix
         counter = 2
@@ -80,6 +68,7 @@ def execute_moves(
     target_dir: Path,
     undo_log_path: Path,
     dry_run: bool = False,
+    quiet: bool = False,
 ) -> dict[str, int | str]:
     """Execute all proposed moves, journaling each one.
 
@@ -99,8 +88,9 @@ def execute_moves(
         dest_dir = target_dir / p.destination_folder if p.destination_folder else target_dir
 
         if dry_run:
-            folder_display = p.destination_folder or "(root)"
-            print(f"  [DRY RUN] {p.relative_path} -> {folder_display} -- {p.reason}")
+            if not quiet:
+                folder_display = p.destination_folder or "(root)"
+                print(f"  [DRY RUN] {p.relative_path} -> {folder_display} -- {p.reason}")
             moved += 1
             continue
 

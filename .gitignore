@@ -11,3 +11,4 @@ build/
 htmlcov/
 .coverage
 .ruff_cache/
+stress_test_data/

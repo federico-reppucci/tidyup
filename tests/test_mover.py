@@ -23,6 +23,7 @@ def test_move_simple(tmp_path):
 
 
 def test_move_collision_same_content(tmp_path):
+    """Same content collision: file is renamed, never deleted."""
     src = tmp_path / "source" / "file.txt"
     src.parent.mkdir()
     src.write_text("identical")
@@ -32,8 +33,11 @@ def test_move_collision_same_content(tmp_path):
     (dest_dir / "file.txt").write_text("identical")
 
     result = move_file_safely(src, dest_dir)
-    assert result == dest_dir / "file.txt"
+    assert result == dest_dir / "file_2.txt"
     assert not src.exists()
+    assert result.read_text() == "identical"
+    # Original at destination is preserved too
+    assert (dest_dir / "file.txt").read_text() == "identical"
 
 
 def test_move_collision_different_content(tmp_path):
@@ -95,6 +99,7 @@ def test_move_creates_dest_dir(tmp_path):
 
 
 def test_move_directory_collision(tmp_path):
+    """Directory collision: source is renamed, never deleted."""
     src_dir = tmp_path / "source" / "SomeApp.app"
     src_dir.mkdir(parents=True)
     (src_dir / "Contents").mkdir()
@@ -106,9 +111,10 @@ def test_move_directory_collision(tmp_path):
     (dest_app / "Contents").mkdir()
 
     result = move_file_safely(src_dir, dest_dir)
-    assert result == dest_app
+    assert result == dest_dir / "SomeApp_2.app"
     assert not src_dir.exists()
-    assert dest_app.exists()
+    assert dest_app.exists()  # original preserved
+    assert result.exists()  # renamed copy exists
 
 
 # --- execute_moves tests ---

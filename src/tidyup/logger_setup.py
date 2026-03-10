@@ -17,9 +17,9 @@ def setup_logging(log_dir: Path, verbose: bool = False) -> logging.Logger:
     fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     logger.addHandler(fh)
 
-    # Stderr handler — INFO or DEBUG based on verbose flag
+    # Stderr handler — WARNING by default, DEBUG with verbose flag
     sh = logging.StreamHandler()
-    sh.setLevel(logging.DEBUG if verbose else logging.INFO)
+    sh.setLevel(logging.DEBUG if verbose else logging.WARNING)
     sh.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
     logger.addHandler(sh)
 

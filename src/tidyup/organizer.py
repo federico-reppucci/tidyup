@@ -18,6 +18,7 @@ from tidyup.helpers import (
     sha256_file,
 )
 from tidyup.ollama_client import OllamaClient, OllamaError, make_token_callback
+from tidyup.progress import ProgressDisplay
 from tidyup.prompts import build_organize_prompt, build_retry_prompt
 from tidyup.scanner import FileInfo
 
@@ -94,6 +95,8 @@ class OllamaOrganizer:
         previews: dict[str, str],
         prompt_builder: Callable[[list[str]], str],
         label: str = "Organizing...",
+        on_token: Callable[[int], None] | None = None,
+        quiet: bool = False,
     ) -> list[Proposal]:
         """Make a single LLM call and parse the response."""
         file_descriptions = build_file_descriptions(files, previews)
@@ -103,27 +106,49 @@ class OllamaOrganizer:
         num_ctx = max(4096, len(prompt) // 4 + num_predict + 512)
         timeout = max(60, len(files) * 20)
 
-        on_token = make_token_callback(label)
+        token_cb = on_token or make_token_callback(label)
         result = self.client.generate(
             prompt,
             timeout=timeout,
-            on_token=on_token,
+            on_token=token_cb,
             options={"num_predict": num_predict, "num_ctx": num_ctx},
             keep_alive="10m",
         )
-        print(f"\r  {label} done ({len(files)} files)")
+        if not quiet:
+            print(f"\r  {label} done ({len(files)} files)")
         return parse_organize_response(result.data, files)
 
-    def organize(self, files: list[FileInfo]) -> list[Proposal]:
+    def organize(
+        self, files: list[FileInfo], progress: ProgressDisplay | None = None
+    ) -> list[Proposal]:
         if not files:
             return []
 
+        if progress:
+            progress.phase(3, "Extracting previews")
         previews = precompute_previews(files)
+        if progress:
+            progress.finish_phase(f"{len(previews)} files")
+
+        if progress:
+            progress.phase(4, "Organizing via LLM")
+            on_token = progress.make_token_callback()
+        else:
+            on_token = None
 
         try:
-            proposals = self._call_llm(files, previews, build_organize_prompt)
+            proposals = self._call_llm(
+                files,
+                previews,
+                build_organize_prompt,
+                on_token=on_token,
+                quiet=progress is not None,
+            )
         except _LLM_ERRORS as e:
-            print(f"\r  Organizing... ERROR: {e}")
+            if progress:
+                progress.finish_phase(f"ERROR: {e}")
+            else:
+                print(f"\r  Organizing... ERROR: {e}")
             log.error("LLM error: %s", e)
             return [
                 Proposal(
@@ -136,7 +161,12 @@ class OllamaOrganizer:
             ]
 
         # Retry once for files the LLM missed
-        proposals = self._retry_unclassified(files, previews, proposals)
+        proposals = self._retry_unclassified(files, previews, proposals, progress)
+
+        if progress:
+            classified = sum(1 for p in proposals if p.reason != NOT_CLASSIFIED_REASON)
+            progress.finish_phase(f"{classified}/{len(files)} files classified")
+
         return proposals
 
     def _retry_unclassified(
@@ -144,6 +174,7 @@ class OllamaOrganizer:
         files: list[FileInfo],
         previews: dict[str, str],
         proposals: list[Proposal],
+        progress: ProgressDisplay | None = None,
     ) -> list[Proposal]:
         """If any files were not classified, retry once with a focused prompt."""
         unclassified = [p for p in proposals if p.reason == NOT_CLASSIFIED_REASON]
@@ -154,9 +185,20 @@ class OllamaOrganizer:
         retry_files = [f for f in files if f.relative_path in unclassified_paths]
         log.info("Retrying %d unclassified files", len(retry_files))
 
+        if progress:
+            on_token = progress.make_token_callback()
+            progress.update(f"retrying {len(retry_files)} missed files")
+        else:
+            on_token = None
+
         try:
             retry_proposals = self._call_llm(
-                retry_files, previews, build_retry_prompt, label="Retrying missed files..."
+                retry_files,
+                previews,
+                build_retry_prompt,
+                label="Retrying missed files...",
+                on_token=on_token,
+                quiet=progress is not None,
             )
         except _LLM_ERRORS as e:
             log.warning("Retry LLM call failed: %s", e)
@@ -186,25 +228,37 @@ class ParallelOllamaOrganizer:
         self.batch_size = batch_size
         self.workers = workers
 
-    def organize(self, files: list[FileInfo]) -> list[Proposal]:
+    def organize(
+        self, files: list[FileInfo], progress: ProgressDisplay | None = None
+    ) -> list[Proposal]:
         if not files:
             return []
 
         # For small file counts, use single call
         if len(files) < 80:
-            return OllamaOrganizer(self.client).organize(files)
+            return OllamaOrganizer(self.client).organize(files, progress=progress)
 
+        if progress:
+            progress.phase(3, "Extracting previews")
         previews = precompute_previews(files)
+        if progress:
+            progress.finish_phase(f"{len(previews)} files")
+
         batches = [files[i : i + self.batch_size] for i in range(0, len(files), self.batch_size)]
 
-        print(
-            f"  Parallel: {len(batches)} batches x{self.batch_size} files, {self.workers} workers"
-        )
+        if progress:
+            progress.phase(4, "Organizing via LLM")
+            progress.setup_parallel(len(batches))
+        else:
+            print(
+                f"  Parallel: {len(batches)} batches x{self.batch_size} files,"
+                f" {self.workers} workers"
+            )
 
         results: list[Proposal] = []
         with ThreadPoolExecutor(max_workers=self.workers) as pool:
             futures = {
-                pool.submit(self._organize_batch, b, previews, idx + 1, len(batches)): b
+                pool.submit(self._organize_batch, b, previews, idx + 1, len(batches), progress): b
                 for idx, b in enumerate(batches)
             }
             for fut in as_completed(futures):
@@ -224,7 +278,11 @@ class ParallelOllamaOrganizer:
                             )
                         )
 
-        print(f"  Parallel: done, {len(results)} files organized")
+        if progress:
+            classified = sum(1 for p in results if p.reason != NOT_CLASSIFIED_REASON)
+            progress.finish_phase(f"{classified}/{len(files)} files classified")
+        else:
+            print(f"  Parallel: done, {len(results)} files organized")
         return results
 
     def _organize_batch(
@@ -233,10 +291,18 @@ class ParallelOllamaOrganizer:
         previews: dict[str, str],
         batch_num: int,
         total: int,
+        progress: ProgressDisplay | None = None,
     ) -> list[Proposal]:
         """Organize one batch (runs in thread)."""
-        # Use a temporary OllamaOrganizer to get retry logic for free
+        on_token = progress.make_token_callback(batch_num) if progress else None
+        quiet = progress is not None
+
         single = OllamaOrganizer(self.client)
-        proposals = single._call_llm(batch, previews, build_organize_prompt)
+        proposals = single._call_llm(
+            batch, previews, build_organize_prompt, on_token=on_token, quiet=quiet
+        )
         proposals = single._retry_unclassified(batch, previews, proposals)
+
+        if progress:
+            progress.batch_done(batch_num)
         return proposals

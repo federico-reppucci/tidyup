@@ -323,14 +323,10 @@ def test_organizer_retries_unclassified_files():
         call_count += 1
         if call_count == 1:
             # First call: only classify a.pdf, miss b.pdf
-            return _gen_result(
-                {"files": [{"file": "a.pdf", "folder": "Work", "reason": "work"}]}
-            )
+            return _gen_result({"files": [{"file": "a.pdf", "folder": "Work", "reason": "work"}]})
         else:
             # Retry: classify b.pdf
-            return _gen_result(
-                {"files": [{"file": "b.pdf", "folder": "Media", "reason": "image"}]}
-            )
+            return _gen_result({"files": [{"file": "b.pdf", "folder": "Media", "reason": "image"}]})
 
     mock_client = MagicMock()
     mock_client.generate.side_effect = fake_generate
@@ -394,9 +390,7 @@ def test_organizer_retry_error_preserves_unclassified():
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            return _gen_result(
-                {"files": [{"file": "a.pdf", "folder": "Work", "reason": "work"}]}
-            )
+            return _gen_result({"files": [{"file": "a.pdf", "folder": "Work", "reason": "work"}]})
         else:
             raise OllamaError("connection timeout")
 

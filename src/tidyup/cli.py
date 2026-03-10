@@ -1,4 +1,4 @@
-"""CLI entry point: scan | undo | status."""
+"""CLI entry point: scan | undo | status | install | uninstall."""
 
 from __future__ import annotations
 
@@ -49,27 +49,6 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("install", help="Install Finder Quick Action (right-click → TidyUp)")
     sub.add_parser("uninstall", help="Remove Finder Quick Action")
 
-    # benchmark
-    bench_p = sub.add_parser("benchmark", help="Compare LLM models on file organization")
-    bench_p.add_argument(
-        "path",
-        nargs="?",
-        default=None,
-        help="Folder to scan (default: ~/Downloads)",
-    )
-    bench_p.add_argument(
-        "--models",
-        nargs="+",
-        default=None,
-        help="Models to benchmark (default: gemma3:4b qwen3:4b gemma3:12b qwen3.5:9b qwen3.5:27b)",
-    )
-    bench_p.add_argument(
-        "--runs",
-        type=int,
-        default=1,
-        help="Runs per model for consistency check (default: 1)",
-    )
-
     args = parser.parse_args(argv)
 
     if not args.command:
@@ -80,8 +59,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.model:
         config.ollama_model = args.model
 
-    # Override target_dir if path specified on scan/benchmark command
-    if args.command in ("scan", "benchmark") and args.path:
+    # Override target_dir if path specified on scan command
+    if args.command == "scan" and args.path:
         config.target_dir = Path(args.path).expanduser().resolve()
 
     setup_logging(config.log_dir, verbose=args.verbose)
@@ -96,9 +75,6 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_install()
     elif args.command == "uninstall":
         return cmd_uninstall()
-    elif args.command == "benchmark":
-        return cmd_benchmark(config, models=args.models, runs=args.runs)
-
     return 0
 
 
@@ -179,6 +155,7 @@ def cmd_scan(config: Config, dry_run: bool = False) -> int:
     from tidyup.helpers import NOT_CLASSIFIED_REASON
     from tidyup.mover import cleanup_empty_dirs, execute_moves
     from tidyup.organizer import OllamaOrganizer, ParallelOllamaOrganizer, detect_duplicates
+    from tidyup.progress import ProgressDisplay
     from tidyup.scanner import scan_downloads
 
     print(f"TidyUp -- Scanning {config.target_dir}...\n")
@@ -207,25 +184,26 @@ def cmd_scan(config: Config, dry_run: bool = False) -> int:
         else:
             organizer = OllamaOrganizer(client)
 
-    # Scan
+    # Phase 1: Scan
     files = scan_downloads(config)
     if not files:
         print("No files to organize.")
         return 0
 
-    print(f"Found {len(files)} files.\n")
+    progress = ProgressDisplay(total_files=len(files))
+    progress.phase(1, "Scanning")
+    progress.finish_phase(f"{len(files)} files found")
 
-    # Detect duplicates
+    # Phase 2: Deduplicate
+    progress.phase(2, "Deduplicating")
     dup_proposals, unique_files = detect_duplicates(files)
     if dup_proposals:
-        print(f"  Duplicates: {len(dup_proposals)} files -> Trash/")
-
-    # Organize via LLM
-    if unique_files:
-        print(f"  Organizing {len(unique_files)} files via LLM...")
-        llm_proposals = organizer.organize(unique_files)
+        progress.finish_phase(f"{len(dup_proposals)} duplicates -> Trash/")
     else:
-        llm_proposals = []
+        progress.finish_phase("no duplicates")
+
+    # Phases 3-4: Previews + LLM organize (handled inside organizer)
+    llm_proposals = organizer.organize(unique_files, progress=progress) if unique_files else []
 
     all_proposals = dup_proposals + llm_proposals
     moves = [p for p in all_proposals if p.needs_move]
@@ -234,22 +212,29 @@ def cmd_scan(config: Config, dry_run: bool = False) -> int:
         print("\nAll files are already well-organized. Nothing to do.")
         return 0
 
-    # Print proposed moves (first 20)
-    print(f"\nProposed moves ({len(moves)} files):")
-    for p in moves[:20]:
-        folder_display = p.destination_folder or "(root)"
-        print(f"  {p.relative_path} -> {folder_display}")
-    if len(moves) > 20:
-        print(f"  ... and {len(moves) - 20} more")
-
-    # Execute
-    print()
-    result = execute_moves(all_proposals, config.target_dir, config.undo_log_path, dry_run)
+    # Phase 5: Move files
+    progress.phase(5, "Moving files")
+    result = execute_moves(
+        all_proposals, config.target_dir, config.undo_log_path, dry_run, quiet=True
+    )
+    move_summary = f"{result['moved']} moved"
+    if result["failed"]:
+        move_summary += f", {result['failed']} failed"
+    progress.finish_phase(move_summary)
 
     if not dry_run:
         cleaned = cleanup_empty_dirs(config.target_dir)
         if cleaned:
             print(f"  Cleaned up {cleaned} empty folders.")
+
+    # Detailed moves output
+    print(f"\n{'Proposed' if dry_run else 'Completed'} moves ({len(moves)} files):")
+    prefix = "[DRY RUN] " if dry_run else ""
+    for p in moves[:20]:
+        folder_display = p.destination_folder or "(root)"
+        print(f"  {prefix}{p.relative_path} -> {folder_display} -- {p.reason}")
+    if len(moves) > 20:
+        print(f"  ... and {len(moves) - 20} more")
 
     # Warn about unclassified files
     unclassified = [p for p in all_proposals if p.reason == NOT_CLASSIFIED_REASON]
@@ -260,7 +245,7 @@ def cmd_scan(config: Config, dry_run: bool = False) -> int:
         if len(unclassified) > 10:
             print(f"  ... and {len(unclassified) - 10} more")
 
-    # Summary — split "Already correct" vs "Unclassified"
+    # Summary
     already_correct = int(result["skipped"]) - len(unclassified)
     parts = [f"Moved: {result['moved']}"]
     if already_correct > 0:
@@ -330,36 +315,4 @@ def cmd_status(config: Config) -> int:
     active = [e for e in entries if not e.undone]
     print(f"\n  Undo log: {len(active)} active entries, {len(entries) - len(active)} undone")
 
-    return 0
-
-
-def cmd_benchmark(config: Config, models: list[str] | None = None, runs: int = 1) -> int:
-    from tidyup.benchmark import (
-        print_agreement_matrix,
-        print_comparison_table,
-        print_folder_structures,
-        run_benchmark,
-    )
-    from tidyup.ollama_client import OllamaError
-
-    if not shutil.which("ollama"):
-        print(
-            "Ollama is not installed.\n\n"
-            "  Install:  brew install ollama\n"
-            "  Start:    brew services start ollama"
-        )
-        return 1
-
-    try:
-        results = run_benchmark(config, models=models, runs=runs)
-    except OllamaError as e:
-        print(f"Error: {e}")
-        return 1
-
-    if not results:
-        return 0
-
-    print_comparison_table(results)
-    print_agreement_matrix(results)
-    print_folder_structures(results)
     return 0
