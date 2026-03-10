@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Python Semantic Release
+        id: release
+        uses: python-semantic-release/python-semantic-release@v9
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tarball sha256
+        if: steps.release.outputs.released == 'true'
+        id: sha
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          URL="https://github.com/${REPO}/archive/refs/tags/${TAG}.tar.gz"
+          for i in 1 2 3; do
+            if SHA=$(curl -sfL "$URL" | sha256sum | awk '{print $1}'); then
+              echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
+              echo "Downloaded tarball, sha256: ${SHA}"
+              break
+            fi
+            echo "Retry $i..."
+            sleep 5
+          done
+
+      - name: Update Homebrew formula
+        if: steps.release.outputs.released == 'true'
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          SHA: ${{ steps.sha.outputs.sha256 }}
+          REPO: ${{ github.repository }}
+        run: |
+          sed -i "s|url \".*\"|url \"https://github.com/${REPO}/archive/refs/tags/${TAG}.tar.gz\"|" Formula/tidyup.rb
+          sed -i "s|sha256 \".*\"|sha256 \"${SHA}\"|" Formula/tidyup.rb
+          echo "Updated formula to ${TAG}:"
+          grep -E 'url|sha256' Formula/tidyup.rb
+
+      - name: Commit and push formula update
+        if: steps.release.outputs.released == 'true'
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/tidyup.rb
+          git diff --cached --quiet && echo "No formula changes" && exit 0
+          git commit -m "chore: update Homebrew formula for v${VERSION} [skip ci]"
+          git push
