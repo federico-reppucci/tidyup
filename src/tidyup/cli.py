@@ -45,6 +45,11 @@ def main(argv: list[str] | None = None) -> int:
     # status
     sub.add_parser("status", help="Check Ollama status and show last run stats")
 
+    # config
+    config_p = sub.add_parser("config", help="View or update settings")
+    config_p.add_argument("key", nargs="?", help="Setting name (e.g. model)")
+    config_p.add_argument("value", nargs="?", help="New value to set")
+
     # install / uninstall
     sub.add_parser("install", help="Install Finder Quick Action (right-click → tidyup)")
     sub.add_parser("uninstall", help="Remove Finder Quick Action")
@@ -71,6 +76,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_undo(config)
     elif args.command == "status":
         return cmd_status(config)
+    elif args.command == "config":
+        return cmd_config(config, key=args.key, value=args.value)
     elif args.command == "install":
         return cmd_install()
     elif args.command == "uninstall":
@@ -124,6 +131,38 @@ def _check_ollama_setup(config: Config, dry_run: bool = False):
                 return None
 
     return client
+
+
+# Maps user-friendly key names to Config field names
+_CONFIG_ALIASES: dict[str, str] = {
+    "model": "ollama_model",
+}
+
+
+def cmd_config(config: Config, key: str | None = None, value: str | None = None) -> int:
+    if key is None:
+        # Show all settings
+        print("tidyup -- Config\n")
+        print(f"  model:     {config.ollama_model}")
+        print(f"  target:    {config.target_dir}")
+        print(f"  parallel:  {config.parallel_requests}")
+        print(f"\n  Config file: {Config._config_path()}")
+        return 0
+
+    field_name = _CONFIG_ALIASES.get(key, key)
+    if not hasattr(config, field_name):
+        print(f"Unknown setting: {key}")
+        return 1
+
+    if value is None:
+        # Show current value
+        print(getattr(config, field_name))
+        return 0
+
+    # Set new value
+    config.save(field_name, value)
+    print(f"Set {key} = {value}")
+    return 0
 
 
 def cmd_install() -> int:

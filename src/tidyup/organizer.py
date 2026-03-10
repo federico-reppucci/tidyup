@@ -104,7 +104,7 @@ class OllamaOrganizer:
 
         num_predict = len(files) * 60 + 200
         num_ctx = max(4096, len(prompt) // 4 + num_predict + 512)
-        timeout = max(60, len(files) * 20)
+        timeout = max(120, len(files) * 20)
 
         token_cb = on_token or make_token_callback(label)
         result = self.client.generate(

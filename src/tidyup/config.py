@@ -33,9 +33,13 @@ class Config:
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
     @classmethod
+    def _config_path(cls) -> Path:
+        return Path.home() / ".config" / "tidyup" / "config.json"
+
+    @classmethod
     def load(cls) -> Config:
         config = cls()
-        config_path = Path.home() / ".config" / "tidyup" / "config.json"
+        config_path = cls._config_path()
         if config_path.exists():
             overrides = json.loads(config_path.read_text())
             for key, value in overrides.items():
@@ -47,3 +51,13 @@ class Config:
                         setattr(config, key, value)
         config.ensure_dirs()
         return config
+
+    def save(self, key: str, value: str) -> None:
+        """Write a single key to the config file, preserving other settings."""
+        config_path = self._config_path()
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        data: dict = {}
+        if config_path.exists():
+            data = json.loads(config_path.read_text())
+        data[key] = value
+        config_path.write_text(json.dumps(data, indent=2) + "\n")
