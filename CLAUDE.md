@@ -125,6 +125,19 @@ Generates ~470 unique + ~30 duplicate files across 9 categories (documents, imag
 - Quick Action: `~/Library/Services/tidyup.workflow`
 - Stress test data: `./stress_test_data/` (gitignored)
 
+## Releases & conventional commits
+
+Releases are fully automated via `python-semantic-release` in `.github/workflows/release.yml`. Push to `main` with conventional commit prefixes and CI handles version bumping, tagging, GitHub Release creation, and Homebrew formula updates.
+
+| Prefix | Effect | Example |
+|---|---|---|
+| `feat:` | Minor bump (0.x.0) | `feat: add Apple Intelligence backend` |
+| `fix:` | Patch bump (0.0.x) | `fix: handle empty folders in scanner` |
+| `feat!:` | Minor bump (while < 1.0) | `feat!: redesign CLI interface` |
+| `chore:`, `ci:`, `docs:`, `refactor:`, `test:` | No release | `ci: speed up test matrix` |
+
+PSR config is in `pyproject.toml` under `[tool.semantic_release]`. The formula in `Formula/tidyup.rb` is updated automatically by CI after each release.
+
 ## Test fixtures (conftest.py)
 
 - `tmp_config` — isolated Config pointing to temp directories
