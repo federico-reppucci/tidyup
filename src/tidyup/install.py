@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 SERVICES_DIR = Path.home() / "Library" / "Services"
-WORKFLOW_NAME = "TidyUp.workflow"
+WORKFLOW_NAME = "tidyup.workflow"
 
 
 def _find_tidyup_path() -> str:
@@ -156,11 +156,11 @@ def _build_info_plist() -> dict:
     return {
         "CFBundleDevelopmentRegion": "en_US",
         "CFBundleIdentifier": "com.tidyup.finder-action",
-        "CFBundleName": "TidyUp",
+        "CFBundleName": "tidyup",
         "CFBundleShortVersionString": "1.0",
         "NSServices": [
             {
-                "NSMenuItem": {"default": "TidyUp"},
+                "NSMenuItem": {"default": "tidyup"},
                 "NSMessage": "runWorkflowAsService",
                 "NSSendFileTypes": [
                     "public.folder",
@@ -175,7 +175,7 @@ def install_quick_action() -> Path:
     """Create and install the TidyUp Quick Action to ~/Library/Services/.
 
     The bundle structure mirrors Apple's system workflows:
-      TidyUp.workflow/Contents/
+      tidyup.workflow/Contents/
         Info.plist              (with NSServices for pbs registration)
         Resources/
           document.wflow        (the Automator workflow definition)
@@ -209,7 +209,7 @@ def install_quick_action() -> Path:
         plistlib.dump(info_plist, f)
 
     # ServicesMenu.strings — localized menu title
-    services_strings = {"default": "TidyUp"}
+    services_strings = {"default": "tidyup"}
     with open(en_lproj / "ServicesMenu.strings", "wb") as f:
         plistlib.dump(services_strings, f)
 

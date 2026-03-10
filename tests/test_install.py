@@ -107,11 +107,11 @@ class TestInstallQuickAction:
         with open(path / "Contents" / "Info.plist", "rb") as f:
             data = plistlib.load(f)
 
-        assert data["CFBundleName"] == "TidyUp"
+        assert data["CFBundleName"] == "tidyup"
         # NSServices is required for pbs to register the Quick Action
         assert "NSServices" in data
         service = data["NSServices"][0]
-        assert service["NSMenuItem"]["default"] == "TidyUp"
+        assert service["NSMenuItem"]["default"] == "tidyup"
         assert service["NSMessage"] == "runWorkflowAsService"
         assert "public.folder" in service["NSSendFileTypes"]
 

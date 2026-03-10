@@ -90,10 +90,10 @@ All LLM clients expose `generate(prompt, timeout, on_token, options, keep_alive)
 
 ## Finder Quick Action
 
-`tidyup install` generates a macOS Automator Quick Action (`.workflow` bundle) at `~/Library/Services/TidyUp.workflow`. The bundle structure mirrors Apple's system workflows:
+`tidyup install` generates a macOS Automator Quick Action (`.workflow` bundle) at `~/Library/Services/tidyup.workflow`. The bundle structure mirrors Apple's system workflows:
 
 ```
-TidyUp.workflow/Contents/
+tidyup.workflow/Contents/
   Info.plist                  (NSServices entry for pbs registration)
   Resources/
     document.wflow            (Automator workflow: Run Shell Script action)
@@ -122,7 +122,7 @@ Generates ~470 unique + ~30 duplicate files across 9 categories (documents, imag
 
 - Config override: `~/.config/tidyup/config.json`
 - Undo log: `~/.local/share/tidyup/undo_log.jsonl`
-- Quick Action: `~/Library/Services/TidyUp.workflow`
+- Quick Action: `~/Library/Services/tidyup.workflow`
 - Stress test data: `./stress_test_data/` (gitignored)
 
 ## Test fixtures (conftest.py)

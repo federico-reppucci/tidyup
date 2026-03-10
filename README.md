@@ -31,7 +31,7 @@ tidyup scan ~/Desktop    # Organize a different folder
 tidyup scan --dry-run    # Preview without moving
 tidyup undo              # Reverse the last operation
 tidyup status            # Check Ollama + journal status
-tidyup install           # Add "TidyUp" to Finder's right-click menu
+tidyup install           # Add "tidyup" to Finder's right-click menu
 tidyup uninstall         # Remove the Finder integration
 ```
 
@@ -100,7 +100,7 @@ Organize folders directly from Finder's right-click menu:
 tidyup install
 ```
 
-This creates a macOS Quick Action. After installing, right-click any folder in Finder → **Services** → **TidyUp**. A Terminal window opens and runs `tidyup scan` on that folder.
+This creates a macOS Quick Action. After installing, right-click any folder in Finder → **Quick Actions** → **tidyup**. A Terminal window opens and runs `tidyup scan` on that folder.
 
 To remove it: `tidyup uninstall`.
 

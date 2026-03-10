@@ -46,7 +46,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("status", help="Check Ollama status and show last run stats")
 
     # install / uninstall
-    sub.add_parser("install", help="Install Finder Quick Action (right-click → TidyUp)")
+    sub.add_parser("install", help="Install Finder Quick Action (right-click → tidyup)")
     sub.add_parser("uninstall", help="Remove Finder Quick Action")
 
     args = parser.parse_args(argv)
@@ -136,7 +136,7 @@ def cmd_install() -> int:
         return 1
 
     print(f"Installed Finder Quick Action at:\n  {path}\n")
-    print("Usage: right-click any folder in Finder → Quick Actions → TidyUp")
+    print("Usage: right-click any folder in Finder → Quick Actions → tidyup")
     return 0
 
 
@@ -144,7 +144,7 @@ def cmd_uninstall() -> int:
     from tidyup.install import uninstall_quick_action
 
     if uninstall_quick_action():
-        print("Removed TidyUp Finder Quick Action.")
+        print("Removed tidyup Finder Quick Action.")
     else:
         print("Quick Action not found (nothing to remove).")
     return 0
@@ -158,7 +158,7 @@ def cmd_scan(config: Config, dry_run: bool = False) -> int:
     from tidyup.progress import ProgressDisplay
     from tidyup.scanner import scan_downloads
 
-    print(f"TidyUp -- Scanning {config.target_dir}...\n")
+    print(f"tidyup -- Scanning {config.target_dir}...\n")
 
     # Prepare LLM organizer
     organizer: OllamaOrganizer | ParallelOllamaOrganizer
@@ -266,7 +266,7 @@ def cmd_undo(config: Config) -> int:
     from tidyup.journal import undo_last
     from tidyup.mover import cleanup_empty_dirs
 
-    print("TidyUp -- Undoing last operation...")
+    print("tidyup -- Undoing last operation...")
 
     result = undo_last(config.undo_log_path)
 
@@ -294,7 +294,7 @@ def cmd_status(config: Config) -> int:
     from tidyup.journal import get_entries
     from tidyup.ollama_client import OllamaClient
 
-    print("TidyUp -- Status\n")
+    print("tidyup -- Status\n")
 
     # Ollama status
     client = OllamaClient(config.ollama_url, config.ollama_model)
