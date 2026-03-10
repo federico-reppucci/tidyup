@@ -1,6 +1,6 @@
 # TidyUp
 
-[![CI](https://github.com/federico-reppucci/tidydownloads/actions/workflows/ci.yml/badge.svg)](https://github.com/federico-reppucci/tidydownloads/actions/workflows/ci.yml)
+[![CI](https://github.com/federico-reppucci/tidyup/actions/workflows/ci.yml/badge.svg)](https://github.com/federico-reppucci/tidyup/actions/workflows/ci.yml)
 
 Local AI-powered file organizer. Scans any folder (defaults to `~/Downloads`), asks a local LLM to propose a clean folder structure, and moves files in-place. No cloud, no rules — the LLM decides everything.
 
@@ -40,7 +40,7 @@ tidyup uninstall         # Remove the Finder integration
 ### Homebrew (recommended)
 
 ```bash
-brew tap federico-reppucci/tidydownloads https://github.com/federico-reppucci/tidydownloads.git
+brew tap federico-reppucci/tidyup https://github.com/federico-reppucci/tidyup.git
 brew install tidyup
 ```
 
@@ -50,8 +50,8 @@ On first run, the default model (`gemma3:4b`) is downloaded automatically.
 
 ```bash
 brew install python@3.12 ollama poppler  # poppler is optional (PDF text extraction)
-git clone https://github.com/federico-reppucci/tidydownloads.git
-cd tidydownloads
+git clone https://github.com/federico-reppucci/tidyup.git
+cd tidyup
 python3.12 -m venv venv
 source venv/bin/activate
 pip install -e .
