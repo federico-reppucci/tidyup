@@ -62,7 +62,7 @@ def test_leading_trailing_non_json_text():
 
 
 def test_leading_text_with_array():
-    text = 'Sure, here you go: [1, 2, 3] hope that helps'
+    text = "Sure, here you go: [1, 2, 3] hope that helps"
     result = repair_json(text)
     assert result == [1, 2, 3]
 

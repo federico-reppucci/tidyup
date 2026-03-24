@@ -421,9 +421,7 @@ def test_organizer_retries_on_llm_error():
         call_count += 1
         if call_count == 1:
             raise OllamaError("malformed JSON")
-        return _gen_result(
-            {"files": [{"file": "a.pdf", "folder": "Work", "reason": "work"}]}
-        )
+        return _gen_result({"files": [{"file": "a.pdf", "folder": "Work", "reason": "work"}]})
 
     mock_client = MagicMock()
     mock_client.generate.side_effect = fake_generate
