@@ -1,6 +1,29 @@
 # CHANGELOG
 
 
+## v0.4.1 (2026-03-24)
+
+### Bug Fixes
+
+- Add JSON repair and batch retry for resilient LLM responses
+  ([`ebe8e03`](https://github.com/federico-reppucci/tidyup/commit/ebe8e03cee19437c27a68bea01ca71742473e914))
+
+Small LLMs occasionally produce malformed JSON in large batches (e.g., missing comma at char 8228 of
+  an ~8KB response). A single parse failure was silently discarding ~40 files. This adds two
+  complementary fixes:
+
+- json_repair module: tries json.loads() first, then sequentially applies substring extraction,
+  comma fixes, and bracket closing before giving up - Batch retry: both single and parallel
+  organizers retry once on LLM error before falling back to error proposals
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+
+### Chores
+
+- Update Homebrew formula for v0.4.0 [skip ci]
+  ([`d3d9b31`](https://github.com/federico-reppucci/tidyup/commit/d3d9b312d1b8a306a64b88f46f6776d5936ff8ec))
+
+
 ## v0.4.0 (2026-03-10)
 
 ### Chores
