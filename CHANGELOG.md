@@ -1,6 +1,21 @@
 # CHANGELOG
 
 
+## v0.4.2 (2026-03-24)
+
+### Bug Fixes
+
+- Format test files with ruff
+  ([`17c550a`](https://github.com/federico-reppucci/tidyup/commit/17c550ad8a4d960ded61c739b9bdbe56069cc840))
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+
+### Chores
+
+- Update Homebrew formula for v0.4.1 [skip ci]
+  ([`d0050ba`](https://github.com/federico-reppucci/tidyup/commit/d0050bae112a9768210161f9f4cd6441c8724895))
+
+
 ## v0.4.1 (2026-03-24)
 
 ### Bug Fixes
