@@ -144,21 +144,31 @@ class OllamaOrganizer:
                 on_token=on_token,
                 quiet=progress is not None,
             )
-        except _LLM_ERRORS as e:
-            if progress:
-                progress.finish_phase(f"ERROR: {e}")
-            else:
-                print(f"\r  Organizing... ERROR: {e}")
-            log.error("LLM error: %s", e)
-            return [
-                Proposal(
-                    relative_path=f.relative_path,
-                    destination_folder=current_parent(f.relative_path),
-                    reason=f"LLM error: {e}",
-                    needs_move=False,
+        except _LLM_ERRORS as first_err:
+            log.warning("LLM error, retrying once: %s", first_err)
+            try:
+                proposals = self._call_llm(
+                    files,
+                    previews,
+                    build_organize_prompt,
+                    on_token=on_token,
+                    quiet=progress is not None,
                 )
-                for f in files
-            ]
+            except _LLM_ERRORS as e:
+                if progress:
+                    progress.finish_phase(f"ERROR: {e}")
+                else:
+                    print(f"\r  Organizing... ERROR: {e}")
+                log.error("LLM error after retry: %s", e)
+                return [
+                    Proposal(
+                        relative_path=f.relative_path,
+                        destination_folder=current_parent(f.relative_path),
+                        reason=f"LLM error: {e}",
+                        needs_move=False,
+                    )
+                    for f in files
+                ]
 
         # Retry once for files the LLM missed
         proposals = self._retry_unclassified(files, previews, proposals, progress)
@@ -298,9 +308,15 @@ class ParallelOllamaOrganizer:
         quiet = progress is not None
 
         single = OllamaOrganizer(self.client)
-        proposals = single._call_llm(
-            batch, previews, build_organize_prompt, on_token=on_token, quiet=quiet
-        )
+        try:
+            proposals = single._call_llm(
+                batch, previews, build_organize_prompt, on_token=on_token, quiet=quiet
+            )
+        except _LLM_ERRORS as first_err:
+            log.warning("Batch %d/%d failed, retrying: %s", batch_num, total, first_err)
+            proposals = single._call_llm(
+                batch, previews, build_organize_prompt, on_token=on_token, quiet=quiet
+            )
         proposals = single._retry_unclassified(batch, previews, proposals)
 
         if progress:

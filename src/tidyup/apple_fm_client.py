@@ -11,6 +11,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from tidyup.json_repair import repair_json
+
 __all__ = ["AppleFMClient", "AppleFMError"]
 
 log = logging.getLogger("tidyup")
@@ -81,7 +83,7 @@ class AppleFMClient:
         text = _strip_code_fences(stdout)
 
         try:
-            parsed = json.loads(text)
+            parsed = repair_json(text)
         except json.JSONDecodeError as e:
             log.debug("Raw afm-cli output: %s", stdout[:500])
             raise AppleFMError(f"Invalid JSON from Apple FM: {e}") from e

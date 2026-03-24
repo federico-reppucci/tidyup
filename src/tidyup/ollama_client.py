@@ -14,6 +14,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from tidyup.json_repair import repair_json
+
 __all__ = [
     "GENERATE_TIMEOUT",
     "PER_FILE_TIMEOUT",
@@ -245,7 +247,7 @@ class OllamaClient:
             if not cleaned and thinking_text:
                 cleaned = thinking_text.strip()
 
-            data = json.loads(cleaned)
+            data = repair_json(cleaned)
             return GenerateResult(data=data, token_count=token_count, elapsed=elapsed)
         except urllib.error.URLError as e:
             raise OllamaError(f"Failed to connect to Ollama: {e}") from e

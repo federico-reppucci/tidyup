@@ -407,3 +407,80 @@ def test_organizer_retry_error_preserves_unclassified():
     assert by_path["b.pdf"].reason == NOT_CLASSIFIED_REASON
     assert by_path["b.pdf"].needs_move is False
     assert call_count == 2
+
+
+# --- LLM error retry tests ---
+
+
+def test_organizer_retries_on_llm_error():
+    """Single organizer retries once on LLM error before giving up."""
+    call_count = 0
+
+    def fake_generate(prompt, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise OllamaError("malformed JSON")
+        return _gen_result(
+            {"files": [{"file": "a.pdf", "folder": "Work", "reason": "work"}]}
+        )
+
+    mock_client = MagicMock()
+    mock_client.generate.side_effect = fake_generate
+
+    org = OllamaOrganizer(mock_client)
+    files = [_make_file("a.pdf")]
+    results = org.organize(files)
+
+    assert len(results) == 1
+    assert results[0].destination_folder == "Work"
+    assert results[0].needs_move is True
+    # First call fails, retry succeeds
+    assert call_count == 2
+
+
+def test_organizer_retry_both_fail_returns_error_proposals():
+    """Both initial and retry LLM calls fail -> returns error proposals."""
+    mock_client = MagicMock()
+    mock_client.generate.side_effect = OllamaError("persistent error")
+
+    org = OllamaOrganizer(mock_client)
+    files = [_make_file("a.pdf"), _make_file("b.pdf")]
+    results = org.organize(files)
+
+    assert len(results) == 2
+    for r in results:
+        assert r.needs_move is False
+        assert "LLM error" in r.reason
+    # Initial + retry = 2 calls
+    assert mock_client.generate.call_count == 2
+
+
+def test_parallel_organizer_retries_failed_batch():
+    """Parallel organizer retries a failed batch once before propagating error."""
+    call_count = 0
+
+    def fake_generate(prompt, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        # First call for second batch fails, retry succeeds
+        if call_count == 2:
+            raise OllamaError("temporary failure")
+        files_result = []
+        for i in range(100):
+            name = f"file{i:03d}.pdf"
+            if name in prompt:
+                files_result.append({"file": name, "folder": "Work", "reason": "work"})
+        return _gen_result({"files": files_result})
+
+    mock_client = MagicMock()
+    mock_client.generate.side_effect = fake_generate
+
+    org = ParallelOllamaOrganizer(mock_client, batch_size=40, workers=1)
+    files = [_make_file(f"file{i:03d}.pdf") for i in range(100)]
+    results = org.organize(files)
+
+    assert len(results) == 100
+    # All files should be classified (retry succeeded)
+    classified = [r for r in results if r.destination_folder == "Work"]
+    assert len(classified) == 100
