@@ -3,8 +3,8 @@ class Tidyup < Formula
 
   desc "Local AI-powered download organizer using Ollama"
   homepage "https://github.com/federico-reppucci/tidyup"
-  url "https://github.com/federico-reppucci/tidyup/archive/refs/tags/v0.4.0.tar.gz"
-  sha256 "a6d5921e5635c7fc75b940a21a2159ab768c5f79d59aed29f7d287901779b070"
+  url "https://github.com/federico-reppucci/tidyup/archive/refs/tags/v0.4.1.tar.gz"
+  sha256 "a0874a7e686234f319861a5048e0fc16e4d749a6ff77c09a55067f1aeb6fb401"
   license "MIT"
   head "https://github.com/federico-reppucci/tidyup.git", branch: "main"
 
